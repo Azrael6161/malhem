@@ -261,12 +261,19 @@ function classicHack(g, p, tile, opts) {
   spendAction(g);
 
   if (!success) {
-    log(g, `${p.name}: взлом провален (бросок ${roll}${bonus ? `+${bonus}` : ''} против сложности ${info.difficulty}).`, { playerId: p.id });
-    return { ...afterAction(g), roll, bonus, difficulty: info.difficulty, success: false };
+  return {
+    ...afterAction(g),
+    roll, bonus, difficulty: info.difficulty, success: false,
+    notice: `${p.name}: взлом провален (${roll}${bonus ? `+${bonus}` : ''} против ${info.difficulty})`,
+    };
   }
 
   const gain = capture(g, p, tile);
-  return { ...afterAction(g), roll, bonus, difficulty: info.difficulty, success: true, captured: true, ...gain };
+  return {
+  ...afterAction(g),
+  roll, bonus, difficulty: info.difficulty, success: true, captured: true, ...gain,
+  notice: `${p.name} успешно взломал узел +${gain.coins}C`,
+  };
 }
 
 /** Паразитический взлом: Прокси-вход (базовый/средний) либо Продвинутый Прокси (сложный). */
@@ -382,15 +389,29 @@ export function buy(g, playerId, cardId) {
   const card = byId(cardId);
   if (!card) return fail('Нет такой карты');
 
-  const pool = g.market[card.level];
-  const idx = pool.indexOf(cardId);
-  if (idx < 0) return fail('Эту карту уже купили');
+  const multi = card.multi === true;
+
+  if (multi) {
+    // Многотиражная карта: каждый покупает один раз, экземпляр рынка не тратится.
+    if (p.cards.some((c) => c.id === cardId)) {
+      return fail('У вас уже есть эта способность');
+    }
+  } else {
+    const pool = g.market[card.level];
+    if (pool.indexOf(cardId) < 0) return fail('Эту карту уже купили');
+  }
 
   const cost = costFor(card, { hasOptimizer: hasPassive(p, 'code_optimizer') });
   if (p.coins < cost) return fail(`Нужно ${cost} C, у вас ${p.coins}`);
 
   p.coins -= cost;
-  pool.splice(idx, 1);
+
+  // Обычные карты уходят с рынка навсегда, многотиражные — остаются.
+  if (!multi) {
+    const pool = g.market[card.level];
+    pool.splice(pool.indexOf(cardId), 1);
+  }
+
   p.cards.push({
     uid: `${cardId}-r${g.round}-${p.cards.length}`,
     id: cardId,
@@ -426,21 +447,27 @@ export function useAbility(g, playerId, cardId, payload = {}) {
     /* ---------- базовый уровень ---------- */
 
     case 'sniffer': {
-      // Приватная разведка: закрытые тайлы вокруг Ядра. Результат виден только владельцу.
+    // Приватная разведка: закрытые тайлы вокруг текущей позиции игрока.
+    // В гекс-сетке ровно 6 соседей — берём их явно (а не через двойной цикл -1..1,
+    // который давал лишние «диагонали»).
       const found = {};
-      for (let dq = -1; dq <= 1; dq++) {
-        for (let dr = -1; dr <= 1; dr++) {
-          if (!dq && !dr) continue;
-          const t = g.tiles[keyOf(p.core.q + dq, p.core.r + dr)];
-          if (t && !t.faceUp) found[KEY(t)] = t.type;
-        }
+      const DIRS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
+      for (const [dq, dr] of DIRS) {
+        const t = g.tiles[keyOf(p.core.q + dq, p.core.r + dr)];
+        if (t && !t.faceUp) found[KEY(t)] = t.type;
       }
-      if (!Object.keys(found).length) return fail('Рядом с вашим Ядром нет закрытых тайлов');
+      if (!Object.keys(found).length) return fail('Рядом нет закрытых тайлов для сканирования');
 
       card.used = true;
       g.peek[playerId] = { ...(g.peek[playerId] ?? {}), ...found };
-      log(g, `${p.name} запускает Сниффер пакетов — изучает периметр.`, { playerId: p.id, private: true });
-      return { ok: true, peek: found };
+
+      const labels = Object.values(found).map((t) => TILE_INFO[t]?.label ?? t);
+      log(g, `${p.name} запускает Сниффер пакетов — видит: ${labels.join(', ')}.`, { playerId: p.id, private: true });
+      return {
+        ok: true,
+        peek: found,
+        notice: `${p.name}: Сниффер показал ${Object.keys(found).length} тайл(ов) вокруг`,
+      };
     }
 
     case 'backdoor': {
@@ -699,9 +726,14 @@ export function hasLegalAction(g, playerId) {
       here.markers.some((m) => m.playerId !== playerId)) return true;
 
   // 4. Рынок
+  // 4. Рынок
   for (const lvl of ['basic', 'medium', 'strong']) {
     for (const id of g.market[lvl]) {
       const card = byId(id);
+      if (!card) continue;
+      // Многотиражные карты, которые у игрока уже есть, не считаем «доступными» —
+      // иначе система ошибочно решит, что игроку есть чем заняться.
+      if (card.multi && p.cards.some((c) => c.id === id)) continue;
       if (p.coins >= costFor(card, { hasOptimizer: hasPassive(p, 'code_optimizer') })) return true;
     }
   }

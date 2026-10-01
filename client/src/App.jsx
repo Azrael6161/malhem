@@ -3,7 +3,6 @@ import { useGameSocket } from './useGameSocket.js';
 import HexBoard from './board/HexBoard.jsx';
 import HUD from './components/HUD.jsx';
 import Market from './components/Market.jsx';
-import LogPanel from './components/LogPanel.jsx';
 import Scoreboard from './components/Scoreboard.jsx';
 import Hand from './components/Hand.jsx';
 import RansomPanel from './components/RansomPanel.jsx';
@@ -74,14 +73,13 @@ function GameTable({ creds, onLeave }) {
     localStorage.removeItem('malhem');
     onLeave();
   };
+
   const { state, send, error, notice, connected } = useGameSocket(creds, handleAuthError);
   const [tab, setTab] = useState('market');
   const [targetMode, setTargetMode] = useState(null);
 
   useEffect(() => { if (!state?.pending) setTargetMode(null); }, [state?.pending]);
 
-  // Лобби проверяем ПЕРВЫМ через optional chaining — иначе при state === null
-  // мы бы сюда не попали, но и не смогли бы отрисовать заглушку ниже.
   if (state?.status === 'lobby') {
     const link = `${location.origin}?room=${state.roomId}`;
     return (
@@ -93,13 +91,13 @@ function GameTable({ creds, onLeave }) {
           <button className="btn" onClick={() => navigator.clipboard.writeText(link)}>Скопировать ссылку</button>
           <ul className="player-list">
             {state.players.map((p) => (
-              <li key={p.id}><span className="dot" style={{ background: `var(--${p.color})`, backgroundColor: p.color }} />
+              <li key={p.id}><span className="dot" style={{ backgroundColor: p.color }} />
                 {p.name}{p.id === creds.playerId && ' (вы)'}</li>
             ))}
             {state.players.length < 2 && <li className="waiting">ждём второго игрока…</li>}
           </ul>
           <button className="btn primary" disabled={state.players.length < 2} onClick={() => send('start')}>
-            Начать игру ({state.players.length}/{4})
+            Начать игру ({state.players.length}/4)
           </button>
           <button className="btn ghost" onClick={onLeave}>Выйти</button>
         </div>
@@ -107,8 +105,6 @@ function GameTable({ creds, onLeave }) {
     );
   }
 
-  // Единственная заглушка «подключаемся». Показываем кнопку выхода,
-  // чтобы игрок не остался в вечном ожидании, если комната умерла на сервере.
   if (!state) return (
     <div className="lobby-screen" style={{ textAlign: 'center' }}>
       <h2>Подключаемся к сети…</h2>
@@ -123,7 +119,7 @@ function GameTable({ creds, onLeave }) {
   const myTurn = state.currentPlayerId === creds.playerId;
   const phase = PHASE_INFO[state.phase];
 
-  /** Клик по гексу в режиме выбора цели: первый клик для Spoofing — «якорь». */
+  /** Клик по гексу в режиме выбора цели. */
   const handleSelect = (tile) => {
     if (!targetMode) return;
     const { cardId, anchor } = targetMode;
@@ -145,9 +141,10 @@ function GameTable({ creds, onLeave }) {
     setTargetMode(null);
   };
 
-  // Флаг: сейчас игрок обязан разместить тайл из резерва (после расширения
-  // сети или после выбора через Ботнет-сканер).
   const inExpansion = myTurn && state.pending?.type === 'place_tile';
+
+  // Класс notice: удача/провал взлома красим по-разному.
+  const noticeIsFail = notice && /не удалось|провал|отбит/i.test(notice);
 
   return (
     <div className="game">
@@ -160,6 +157,14 @@ function GameTable({ creds, onLeave }) {
         <div className="reserve" title="Сколько тайлов осталось в Резерве Сети">
           Резерв: <b>{state.reserveCount}</b>
         </div>
+
+        {/* Результат последнего действия (взлом/атака/расширение). */}
+        {notice && (
+          <div className={`header-notice ${noticeIsFail ? 'bad' : 'good'}`}>
+            {notice}
+          </div>
+        )}
+
         <div className={`conn ${connected ? 'on' : 'off'}`}>
           {connected ? '● синхронизировано' : '○ переподключение'}
         </div>
@@ -191,8 +196,6 @@ function GameTable({ creds, onLeave }) {
             ransomCost={state.ransomCost}
           />
 
-          {/* Аварийная кнопка завершения расширения — на случай,
-              если сервер прислал pending без доступных слотов. */}
           {inExpansion && (
             <div style={{ textAlign: 'center', margin: '10px 0' }}>
               <button className="btn ghost" onClick={() => send('pass', {})}>
@@ -215,11 +218,9 @@ function GameTable({ creds, onLeave }) {
           <RansomPanel state={state} send={send} myTurn={myTurn} />
           <div className="tabs">
             <button className={tab === 'market' ? 'on' : ''} onClick={() => setTab('market')}>Рынок</button>
-            <button className={tab === 'log' ? 'on' : ''} onClick={() => setTab('log')}>Журнал</button>
             <button className={tab === 'scores' ? 'on' : ''} onClick={() => setTab('scores')}>Очки</button>
           </div>
           {tab === 'market' && <Market state={state} me={me} send={send} myTurn={myTurn} />}
-          {tab === 'log' && <LogPanel log={state.log} players={state.players} />}
           {tab === 'scores' && <Scoreboard state={state} />}
         </aside>
       </main>
@@ -240,7 +241,6 @@ function GameTable({ creds, onLeave }) {
       )}
 
       {error && <div className="toast err-toast">{error}</div>}
-      {notice && <div className="toast">{notice}</div>}
     </div>
   );
 };

@@ -34,8 +34,8 @@ export const CARDS = [
     text: 'В конце цикла +1 C за каждые два ваших маркера на поле.' },
 
   // --- Средний уровень (4 C) ---
-  { id: 'exploit_vbs', name: 'Exploit.vbs', level: 'medium', type: 'passive',
-    text: 'Открывает действие «Атака». +1 к боевому броску при нападении.' },
+  { id: 'exploit_vbs', name: 'Exploit.vbs', level: 'medium', type: 'passive', multi: true,
+    text: 'Открывает действие «Атака». +1 к боевому броску при нападении. Могут купить все игроки.' },
   { id: 'adv_proxy', name: 'Продвинутый Прокси', level: 'medium', type: 'active', targeting: 'none',
     text: 'Разовая. Без броска присосаться к сложному узлу. Стоит 2 C в банк.' },
   { id: 'firewall', name: 'Firewall', level: 'medium', type: 'passive',

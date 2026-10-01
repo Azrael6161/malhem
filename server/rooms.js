@@ -1,5 +1,5 @@
 import { createGame, startGame, currentPlayer, isBlocked, log as pushLog } from './game/state.js';
-import { CARD_LEVELS } from './game/cards.js';
+import { CARD_LEVELS, byId } from './game/cards.js';
 import { RANSOM_COST } from './game/config.js';
 import * as A from './game/actions.js';
 
@@ -94,7 +94,22 @@ export function viewFor(room, playerId) {
     routerPlaced: g.routerPlaced,
     finalRoundsLeft: g.finalRoundsLeft,
     reserveCount: g.reserve.length,
-    market: g.market,
+    market: (() => {
+      const me = g.players.find((p) => p.id === playerId);
+      const owned = new Set((me?.cards ?? []).map((c) => c.id));
+      const filter = (pool) => pool.filter((id) => {
+        const card = byId(id);
+        if (!card) return false;
+        // Многотиражные карты, которые у игрока уже есть, скрываем только у него.
+        if (card.multi && owned.has(id)) return false;
+        return true;
+      });
+      return {
+        basic: filter(g.market.basic),
+        medium: filter(g.market.medium),
+        strong: filter(g.market.strong),
+      };
+    })(),
     ransomCost: RANSOM_COST,
 
     players: g.players.map((p) => {
@@ -183,6 +198,16 @@ export function dispatch(room, playerId, action) {
 
 function fin(room, result) {
   if (result?.error) return result;
+
+  // Пробрасываем notice всем в комнате — App.jsx покажет его в хедере.
+  if (result?.notice) {
+    for (const [, sock] of room.sockets) {
+      if (sock.readyState === 1) {
+        sock.send(JSON.stringify({ type: 'notice', text: result.notice }));
+      }
+    }
+  }
+
   broadcast(room);
   return result ?? { ok: true };
 }

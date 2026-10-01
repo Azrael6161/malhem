@@ -50,7 +50,8 @@ export default function Hand({ me, state, send, myTurn, targetMode, setTargetMod
 
       {me.cards.map((c) => {
         const isActive = c.type === 'active';
-        const usable = isActive && c.armed && !c.used && !busy && INSTANT.concat(Object.keys(TARGETED)).includes(c.id);
+        const isTriggerable = INSTANT.includes(c.id) || Object.keys(TARGETED).includes(c.id);
+        const usable = isActive && c.armed && !c.used && !busy && isTriggerable;
         const isZeroDay = c.id === 'zero_day';
         const isProxy = c.id === 'proxy_in' || c.id === 'adv_proxy';
         const isPoly = c.id === 'polymorph';
@@ -65,6 +66,18 @@ export default function Hand({ me, state, send, myTurn, targetMode, setTargetMod
 
             {!c.armed && <em className="state">включится в начале вашего след. хода</em>}
             {c.armed && c.used && <em className="state">перезарядка до конца цикла</em>}
+
+            {/* Кнопка активации для мгновенных и target-карт. */}
+            {isTriggerable && (
+              <button
+                className="btn small primary"
+                disabled={!usable}
+                onClick={() => activate(c.id)}
+                title={!myTurn ? 'Не ваш ход' : state.pending ? 'Завершите текущий шаг' : ''}
+              >
+                {TARGETED[c.id] ? 'Выбрать цель' : 'Активировать'}
+              </button>
+            )}
 
             {isZeroDay && c.armed && !c.used && (
               <em className="state ok">Применяется кнопкой «Взломать» — включите тумблер Zero-Day</em>
@@ -97,4 +110,4 @@ export default function Hand({ me, state, send, myTurn, targetMode, setTargetMod
       })}
     </div>
   );
-}
+};

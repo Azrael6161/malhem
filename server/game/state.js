@@ -4,14 +4,23 @@ import { shuffle, makeRng } from './rng.js';
 import { keyOf, ring } from './hex.js';
 import {
   COLORS, START_COINS, MARKERS_PER_PLAYER, POINTS_TO_TRIGGER, FINAL_ROUNDS,
-  PHASE_LENGTH, HARD_ROUND_CAP, INCOME_BY_TILE, SCORING_MODE,
+  PHASE_LENGTHS, HARD_ROUND_CAP, INCOME_BY_TILE, SCORING_MODE,
   CRYPTO_LOCKER_BONUS, RANSOM_COST, INCOME_AFTER_ROUTER, START_COINS as _SC,
 } from './config.js';
 
-export const phaseForRound = (round) =>
-  round <= PHASE_LENGTH ? 1 : round <= PHASE_LENGTH * 2 ? 2 : 3;
+/**
+ * Фаза по номеру круга.
+ *  Фаза 1 — круги 1..PHASE_LENGTHS[1]
+ *  Фаза 2 — круги PHASE_LENGTHS[1]+1 .. PHASE_LENGTHS[1]+PHASE_LENGTHS[2]
+ *  Фаза 3 — все последующие круги
+ */
+export const phaseForRound = (round) => {
+  if (round <= PHASE_LENGTHS[1]) return 1;
+  if (round <= PHASE_LENGTHS[1] + PHASE_LENGTHS[2]) return 2;
+  return 3;
+};
 
-/** Окно, когда выкатывается Маршрутизатор. */
+/** Создание партии. */
 export function createGame({ seed, playerDefs }) {
   const rng = makeRng(seed);
   const players = playerDefs.map((p, i) => ({
@@ -274,4 +283,4 @@ export function finishGame(g, reason = '') {
   g.finalScores = scored;
   log(g, `Игра окончена${reason ? ` (${reason})` : ''}. Победитель: ${playerById(g, g.winnerId)?.name}.`);
   return { ok: true };
-}
+};

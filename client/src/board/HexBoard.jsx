@@ -19,9 +19,10 @@ const STROKE = {
  * Гекс-поле: зум колесом, панорамирование перетаскиванием.
  *
  * Режимы клика (по приоритету):
- *  1. pending: place_tile / place_router — подсвечены только слоты расширения
- *  2. targetMode — идёт выбор цели для способности (подсветка по валидности)
- *  3. обычный шаг — подсвечены гексы в радиусе перемещения
+ *  1. pending: place_tile / place_router — подсвечены слоты расширения,
+ *     включая пустые позиции (их нет в tiles, они рендерятся отдельно).
+ *  2. targetMode — идёт выбор цели для способности.
+ *  3. обычный шаг — подсвечены гексы в радиусе перемещения.
  */
 export default function HexBoard({
   tiles, players, you, currentPlayerId,
@@ -42,12 +43,7 @@ export default function HexBoard({
     [slots],
   );
 
-  /**
-   * Safety-net: если сервер прислал pending на размещение тайла,
-   * но доступных слотов нет — ход некуда двигать, зависаем.
-   * Автоматически завершаем ход через 'pass'. Защита от повторной
-   * отправки — ref, чтобы не заспамить сервер при медленном ответе.
-   */
+  /** Safety-net: если pending есть, но слотов нет — авто-pass. */
   const autoPassRef = useRef(false);
   useEffect(() => {
     const isPlacement = pending?.type === 'place_tile' || pending?.type === 'place_router';
@@ -61,7 +57,7 @@ export default function HexBoard({
     }
   }, [pending, myTurn, legalSlots, send]);
 
-  /** Гексы, доступные для шага (радиус 1; Worm.exe расширяет — уточняется по руке). */
+  /** Гексы, доступные для шага (радиус 1; Worm.exe расширяет). */
   const reachable = useMemo(() => {
     if (!myTurn || !me || pending || targetMode) return new Set();
     const range = 1;
@@ -139,6 +135,9 @@ export default function HexBoard({
   };
   const onUp = () => { drag.current = null; };
 
+  // Режим «ставим тайл/роутер» — на пустые слоты вешаем отдельные клики.
+  const placementMode = pending?.type === 'place_tile' || pending?.type === 'place_router';
+
   return (
     <div className="board-wrap">
       <svg className="board" onWheel={onWheel} onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}>
@@ -178,7 +177,6 @@ export default function HexBoard({
                   </text>
                 )}
 
-                {/* Заблокированный маркер (Ransomware) */}
                 {(t.blockedFor ?? []).length > 0 && (
                   <g>
                     <text y={-SIZE + 12} textAnchor="middle" fontSize="13">🔒</text>
@@ -214,6 +212,33 @@ export default function HexBoard({
               </g>
             );
           })}
+
+          {/* Пустые слоты расширения — их нет в tiles, поэтому рисуем отдельно.
+              Именно этих гексов не хватало: место для нового тайла было, но
+              клиент его не показывал и кликнуть было некуда. */}
+          {placementMode && pending.options?.map((s) => {
+            const k = TILE_KEY(s.q, s.r);
+            if (byKey.has(k)) return null;      // защита от гонки: слот уже занят
+            const { x, y } = toPixel(s.q, s.r, SIZE);
+            return (
+              <g key={`slot-${k}`} data-hex={`slot-${k}`}
+                 transform={`translate(${x} ${y})`}
+                 onClick={() => {
+                   send(pending.type === 'place_router' ? 'placeRouter' : 'placeTile',
+                        { slot: { q: s.q, r: s.r } });
+                 }}
+                 onMouseEnter={() => setHover({ q: s.q, r: s.r, type: 'slot' })}
+                 onMouseLeave={() => setHover(null)}
+                 style={{ cursor: 'pointer' }}>
+                <path d={hexPath(0, 0, SIZE - 2)}
+                  fill="rgba(255, 210, 74, 0.10)"
+                  stroke="#ffd24a"
+                  strokeWidth={2.5}
+                  strokeDasharray="6 4" />
+                <text y="7" textAnchor="middle" fontSize="22" fill="#ffd24a" opacity="0.85">+</text>
+              </g>
+            );
+          })}
         </g>
       </svg>
 
@@ -221,6 +246,13 @@ export default function HexBoard({
         <div className="tile-tip">
           <b>{TILE_LABEL[hover.type] ?? hover.type}</b>
           {POINT_VALUE[hover.type] && <span> · {POINT_VALUE[hover.type]} очк. за захват</span>}
+          <div className="tip-coords">q{hover.q} r{hover.r}</div>
+        </div>
+      )}
+
+      {hover?.type === 'slot' && (
+        <div className="tile-tip">
+          <b>Разместить тайл</b>
           <div className="tip-coords">q{hover.q} r{hover.r}</div>
         </div>
       )}
