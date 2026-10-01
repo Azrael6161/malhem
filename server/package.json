@@ -1,0 +1,20 @@
+{
+  "name": "malhem-server",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "Сервер настольной игры Malhem: комнаты, синхронизация, вся логика правил.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "test:engine": "node test/engine.test.mjs",
+    "test:sim": "node test/simulate.mjs",
+    "test:e2e": "node test/e2e.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
