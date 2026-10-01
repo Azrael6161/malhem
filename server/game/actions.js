@@ -99,26 +99,20 @@ export function endTurn(g) {
 /** Досрочная передача хода. Разрешена только если полезных действий не осталось. */
 export function pass(g, playerId) {
   if (!checkTurn(g, playerId)) return fail('Не ваш ход');
-  if (g.pending) return fail('Сначала завершите текущий шаг');
-  const p = playerById(g, playerId);
 
-  if (p.skipActions > 0) {
-    p.skipActions -= 1;
-    spendAction(g);
-    log(g, `${p.name} пропускает действие — штраф Антивируса.`, { playerId: p.id });
-    return afterAction(g);
+  // Разрешаем завершить ход, если висит необязательное расширение сети.
+  // Игрок имеет право отказаться от размещения тайла из резерва.
+  if (g.pending) {
+    if (g.pending.playerId === playerId && g.pending.type === 'place_tile') {
+      g.pending = null;
+      return endTurn(g);
+    }
+    // Любой другой pending завершать через pass нельзя —
+    // там игрок обязан сделать выбор (карта, цель атаки и т.д.).
+    return fail('Завершите текущий шаг');
   }
-  /* Пас разрешён, если действий нет, если игрок уже что-то сделал в этот ход,
-     либо если полезных действий действительно не осталось. Так игрок не может
-     случайно пропустить весь ход, но и не может застрять намертво. */
-  if (g.actionsLeft > 0 && (g.actionsSpent ?? 0) === 0 && hasLegalAction(g, playerId)) {
-    return fail('У вас ещё есть доступные действия');
-  }
-  if (g.actionsLeft > 0) {
-    log(g, `${p.name} завершает ход досрочно.`, { playerId: p.id });
-    g.actionsLeft = 0;
-  }
-  return requestExpansion(g);
+
+  return endTurn(g);
 }
 
 /* --------------------------- ПЕРЕМЕЩЕНИЕ --------------------------- */

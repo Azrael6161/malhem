@@ -86,34 +86,39 @@ const server = http.createServer(async (req, res) => {
   return json(res, 404, { error: 'not found' });
 });
 
+/* ===================== WebSocket ===================== */
+
 const wss = new WebSocketServer({ server, path: '/ws' });
 
-/**
- * Код 4001 — кастомный «auth error».
- * Клиент (useGameSocket.js) на этот код очищает localStorage и возвращает
- * пользователя в лобби вместо бесконечного «Подключаемся к сети…».
- * 4002 — общий «игрок не найден в комнате» (комнату нашли, но игрока нет).
- * Для клиента обе ветки — сигнал выйти в лобби.
- */
+// 4001 — комната исчезла (например, рестарт сервера),
+// 4002 — игрок не найден в комнате.
+// Клиент (useGameSocket) на эти коды чистит localStorage и уходит в лобби.
 const CLOSE_ROOM_GONE = 4001;
 const CLOSE_PLAYER_GONE = 4002;
 
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url, 'http://localhost');
-  const room = getRoom(url.searchParams.get('room'));
+  const roomId = url.searchParams.get('room');
   const playerId = url.searchParams.get('player');
 
+  console.log('[ws] подключение:', { roomId, playerId, rooms: [...ROOMS.keys()] });
+
+  const room = getRoom(roomId);
   if (!room) {
-    // Раньше было просто ws.close() — клиент воспринимал это как «разрыв связи»
-    // и пытался реконнектиться до бесконечности, показывая «Подключаемся…».
-    try { ws.send(JSON.stringify({ type: 'error', error: 'Комната не найдена' })); } catch { /* noop */ }
+    console.warn('[ws] ✗ комната не найдена:', roomId);
+    try { ws.send(JSON.stringify({ type: 'error', error: 'Комната не найдена' })); } catch {}
     return ws.close(CLOSE_ROOM_GONE, 'Room not found');
   }
+
   const g = ensureGame(room);
   if (!g.players.some((p) => p.id === playerId)) {
-    try { ws.send(JSON.stringify({ type: 'error', error: 'Игрок не найден в этой комнате' })); } catch { /* noop */ }
+    console.warn('[ws] ✗ игрок не найден:', playerId,
+                 '| игроки в комнате:', g.players.map((p) => p.id));
+    try { ws.send(JSON.stringify({ type: 'error', error: 'Игрок не найден в этой комнате' })); } catch {}
     return ws.close(CLOSE_PLAYER_GONE, 'Player not found');
   }
+
+  console.log('[ws] ✓ подключено:', playerId, '→ комната', roomId);
 
   attachSocket(room, playerId, ws);
   ws.send(JSON.stringify({ type: 'state', state: viewFor(room, playerId) }));
@@ -125,23 +130,8 @@ wss.on('connection', (ws, req) => {
     if (msg.type === 'ping') return ws.send(JSON.stringify({ type: 'pong' }));
 
     const result = dispatch(room, playerId, msg);
-
-    if (result?.error) {
-      // Страховка: если по ходу обработки игрок попал в «залипший» pending
-      // (устаревший слот, повторный клик), сбрасываем его, чтобы не
-      // блокировать завершение хода. Игровая логика сама так не делает,
-      // но два параллельных сообщения могут привести к гонке.
-      if (result.clearPending && room.game?.pending?.playerId === playerId) {
-        room.game.pending = null;
-      }
-      ws.send(JSON.stringify({ type: 'error', error: result.error }));
-      // Даже при ошибке перешлём актуальный state: клиент увидит
-      // либо сброшенный pending, либо состояние без изменений.
-      ws.send(JSON.stringify({ type: 'state', state: viewFor(room, playerId) }));
-      return;
-    }
-
-    broadcast(room);
+    if (result?.error) ws.send(JSON.stringify({ type: 'error', error: result.error }));
+    else broadcast(room);
   });
 
   ws.on('close', () => { detachSocket(room, playerId); broadcast(room); });
