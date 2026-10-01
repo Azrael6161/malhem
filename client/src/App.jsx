@@ -69,14 +69,20 @@ export default function App() {
 }
 
 function GameTable({ creds, onLeave }) {
-  const { state, send, error, notice, connected } = useGameSocket(creds);
+
+  const handleAuthError = () => {
+    localStorage.removeItem('malhem');
+    onLeave();
+  };
+  const { state, send, error, notice, connected } = useGameSocket(creds, handleAuthError);
   const [tab, setTab] = useState('market');
   const [targetMode, setTargetMode] = useState(null);
 
   useEffect(() => { if (!state?.pending) setTargetMode(null); }, [state?.pending]);
-  if (!state) return <div className="lobby-screen"><h2>Подключаемся к сети…</h2></div>;
 
-  if (state.status === 'lobby') {
+  // Лобби проверяем ПЕРВЫМ через optional chaining — иначе при state === null
+  // мы бы сюда не попали, но и не смогли бы отрисовать заглушку ниже.
+  if (state?.status === 'lobby') {
     const link = `${location.origin}?room=${state.roomId}`;
     return (
       <div className="lobby-screen">
@@ -100,6 +106,18 @@ function GameTable({ creds, onLeave }) {
       </div>
     );
   }
+
+  // Единственная заглушка «подключаемся». Показываем кнопку выхода,
+  // чтобы игрок не остался в вечном ожидании, если комната умерла на сервере.
+  if (!state) return (
+    <div className="lobby-screen" style={{ textAlign: 'center' }}>
+      <h2>Подключаемся к сети…</h2>
+      <p style={{ color: '#888', marginTop: 8 }}>Если комната была удалена, вернитесь в лобби.</p>
+      <button className="btn" style={{ marginTop: 16 }} onClick={handleAuthError}>
+        Выйти в лобби
+      </button>
+    </div>
+  );
 
   const me = state.players.find((p) => p.id === creds.playerId);
   const myTurn = state.currentPlayerId === creds.playerId;
@@ -126,6 +144,10 @@ function GameTable({ creds, onLeave }) {
     send('ability', payload);
     setTargetMode(null);
   };
+
+  // Флаг: сейчас игрок обязан разместить тайл из резерва (после расширения
+  // сети или после выбора через Ботнет-сканер).
+  const inExpansion = myTurn && state.pending?.type === 'place_tile';
 
   return (
     <div className="game">
@@ -168,6 +190,17 @@ function GameTable({ creds, onLeave }) {
             send={send}
             ransomCost={state.ransomCost}
           />
+
+          {/* Аварийная кнопка завершения расширения — на случай,
+              если сервер прислал pending без доступных слотов. */}
+          {inExpansion && (
+            <div style={{ textAlign: 'center', margin: '10px 0' }}>
+              <button className="btn ghost" onClick={() => send('pass', {})}>
+                Пропустить расширение
+              </button>
+            </div>
+          )}
+
           <div className="legend">
             <span><i className="lg basic" /> базовый · 1 очк.</span>
             <span><i className="lg medium" /> средний · 2 очк.</span>
@@ -210,4 +243,4 @@ function GameTable({ creds, onLeave }) {
       {notice && <div className="toast">{notice}</div>}
     </div>
   );
-}
+};

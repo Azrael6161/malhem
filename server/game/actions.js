@@ -607,13 +607,26 @@ export function placeTile(g, playerId, slot, reserveIndex = 0) {
     const type = g.reserve[chosen.index];
     if (!type) return fail('Резерв пуст');
     g.reserve.splice(chosen.index, 1);
-    g.pending = { type: 'place_tile', playerId, options: expansionSlots(g), forcedType: type };
+
+    // Проверяем, есть ли вообще куда расширяться. Если нет — сразу завершаем ход,
+    // иначе клиент зависнет в режиме 'place_tile' с пустым списком слотов.
+    const options = expansionSlots(g);
+    if (options.length === 0) {
+      log(g, `${p.name} выбирает тайл из сканирования, но расширяться некуда — ход переходит дальше.`, { playerId });
+      g.pending = null;
+      return endTurn(g);
+    }
+
+    g.pending = { type: 'place_tile', playerId, options, forcedType: type };
     log(g, `${p.name} выбирает тайл из сканирования.`, { playerId });
     return { ok: true, awaiting: 'place_tile' };
   }
 
   if (pend.type !== 'place_tile') return fail('Сейчас не ваш шаг расширения');
-  if (!pend.options.some((o) => o.q === slot.q && o.r === slot.r)) {
+
+  // Валидация слота: клиент мог прислать слот, которого нет в options
+  // (устаревшее состояние, двойной клик, попытка положить тайл не к своей грани).
+  if (!slot || !pend.options.some((o) => o.q === slot.q && o.r === slot.r)) {
     return fail('Тайл можно положить только к открытой грани сети');
   }
 
@@ -630,6 +643,10 @@ export function placeTile(g, playerId, slot, reserveIndex = 0) {
   g.reserve.splice(idx, 1);
   g.tiles[KEY(slot)] = { q: slot.q, r: slot.r, type, faceUp: false, markers: [], blockedFor: [] };
   log(g, `${p.name} расширяет сеть — открыт новый гекс.`, { playerId });
+
+  // Явно сбрасываем pending, чтобы не осталось «висящего» ожидания,
+  // если endTurn по какой-то причине не тронет это поле.
+  g.pending = null;
   return endTurn(g);
 }
 

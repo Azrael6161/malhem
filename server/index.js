@@ -88,16 +88,31 @@ const server = http.createServer(async (req, res) => {
 
 const wss = new WebSocketServer({ server, path: '/ws' });
 
+/**
+ * Код 4001 — кастомный «auth error».
+ * Клиент (useGameSocket.js) на этот код очищает localStorage и возвращает
+ * пользователя в лобби вместо бесконечного «Подключаемся к сети…».
+ * 4002 — общий «игрок не найден в комнате» (комнату нашли, но игрока нет).
+ * Для клиента обе ветки — сигнал выйти в лобби.
+ */
+const CLOSE_ROOM_GONE = 4001;
+const CLOSE_PLAYER_GONE = 4002;
+
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url, 'http://localhost');
   const room = getRoom(url.searchParams.get('room'));
   const playerId = url.searchParams.get('player');
 
-  if (!room) { ws.send(JSON.stringify({ type: 'error', error: 'Комната не найдена' })); return ws.close(); }
+  if (!room) {
+    // Раньше было просто ws.close() — клиент воспринимал это как «разрыв связи»
+    // и пытался реконнектиться до бесконечности, показывая «Подключаемся…».
+    try { ws.send(JSON.stringify({ type: 'error', error: 'Комната не найдена' })); } catch { /* noop */ }
+    return ws.close(CLOSE_ROOM_GONE, 'Room not found');
+  }
   const g = ensureGame(room);
   if (!g.players.some((p) => p.id === playerId)) {
-    ws.send(JSON.stringify({ type: 'error', error: 'Игрок не найден в этой комнате' }));
-    return ws.close();
+    try { ws.send(JSON.stringify({ type: 'error', error: 'Игрок не найден в этой комнате' })); } catch { /* noop */ }
+    return ws.close(CLOSE_PLAYER_GONE, 'Player not found');
   }
 
   attachSocket(room, playerId, ws);
@@ -110,8 +125,23 @@ wss.on('connection', (ws, req) => {
     if (msg.type === 'ping') return ws.send(JSON.stringify({ type: 'pong' }));
 
     const result = dispatch(room, playerId, msg);
-    if (result?.error) ws.send(JSON.stringify({ type: 'error', error: result.error }));
-    else broadcast(room);
+
+    if (result?.error) {
+      // Страховка: если по ходу обработки игрок попал в «залипший» pending
+      // (устаревший слот, повторный клик), сбрасываем его, чтобы не
+      // блокировать завершение хода. Игровая логика сама так не делает,
+      // но два параллельных сообщения могут привести к гонке.
+      if (result.clearPending && room.game?.pending?.playerId === playerId) {
+        room.game.pending = null;
+      }
+      ws.send(JSON.stringify({ type: 'error', error: result.error }));
+      // Даже при ошибке перешлём актуальный state: клиент увидит
+      // либо сброшенный pending, либо состояние без изменений.
+      ws.send(JSON.stringify({ type: 'state', state: viewFor(room, playerId) }));
+      return;
+    }
+
+    broadcast(room);
   });
 
   ws.on('close', () => { detachSocket(room, playerId); broadcast(room); });

@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { hexPath, toPixel, TILE_KEY } from './geometry.js';
 import { TILE_LABEL, TRAP_TYPES, COLOR_HEX, POINT_VALUE } from '../constants.js';
 
@@ -41,6 +41,25 @@ export default function HexBoard({
     () => new Set((slots ?? []).map((s) => TILE_KEY(s.q, s.r))),
     [slots],
   );
+
+  /**
+   * Safety-net: если сервер прислал pending на размещение тайла,
+   * но доступных слотов нет — ход некуда двигать, зависаем.
+   * Автоматически завершаем ход через 'pass'. Защита от повторной
+   * отправки — ref, чтобы не заспамить сервер при медленном ответе.
+   */
+  const autoPassRef = useRef(false);
+  useEffect(() => {
+    const isPlacement = pending?.type === 'place_tile' || pending?.type === 'place_router';
+    if (!isPlacement) {
+      autoPassRef.current = false;
+      return;
+    }
+    if (myTurn && legalSlots.size === 0 && !autoPassRef.current) {
+      autoPassRef.current = true;
+      send('pass', {});
+    }
+  }, [pending, myTurn, legalSlots, send]);
 
   /** Гексы, доступные для шага (радиус 1; Worm.exe расширяет — уточняется по руке). */
   const reachable = useMemo(() => {
@@ -207,4 +226,4 @@ export default function HexBoard({
       )}
     </div>
   );
-}
+};

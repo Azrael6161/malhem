@@ -11,6 +11,16 @@ export function useGameSocket({ roomId, playerId }) {
   const [connected, setConnected] = useState(false);
   const ref = useRef(null);
 
+  ws.onclose = (event) => {
+    setConnected(false);
+    // Код 4001 — сервер явно сообщил, что комната/игрок не найдены
+    if (event.code === 4001) {
+      onAuthError?.();
+      return; // не ретраим
+    }
+    if (!closed) retry = setTimeout(open, 1200);
+  };
+
   useEffect(() => {
     if (!roomId || !playerId) return;
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -33,6 +43,9 @@ export function useGameSocket({ roomId, playerId }) {
     open();
 
     return () => { closed = true; clearTimeout(retry); ws?.close(); };
+
+    
+
   }, [roomId, playerId]);
 
   const send = useCallback((type, payload = {}) => {
