@@ -1,5 +1,5 @@
 import { createGame, startGame, currentPlayer, isBlocked, log as pushLog } from './game/state.js';
-import { CARD_LEVELS, byId } from './game/cards.js';
+import { CARD_LEVELS, byId, conflictsWith } from './game/cards.js';
 import { RANSOM_COST } from './game/config.js';
 import * as A from './game/actions.js';
 
@@ -102,6 +102,7 @@ export function viewFor(room, playerId) {
         if (!card) return false;
         // Многотиражные карты, которые у игрока уже есть, скрываем только у него.
         if (card.multi && owned.has(id)) return false;
+        if (conflictsWith(id, owned)) return false;
         return true;
       });
       return {
