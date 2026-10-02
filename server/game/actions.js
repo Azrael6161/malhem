@@ -1,10 +1,10 @@
 import { keyOf, neighbors, distance } from './hex.js';
 import { TILE_INFO, isNode, isTrap } from './tiles.js';
-import { byId, costFor, CARD_LEVELS } from './cards.js';
+import { byId, costFor, CARD_LEVELS, conflictsWith } from './cards.js';
 import { rollD6 } from './rng.js';
 import {
   currentPlayer, playerById, log, advanceTurn, hasPassive,
-  checkRouterTrigger, expansionSlots,
+  checkRouterTrigger, expansionSlots, finishGame,
 } from './state.js';
 import { RANSOM_COST, MARKERS_PER_PLAYER, CAPTURE_BOUNTY } from './config.js';
 
@@ -216,14 +216,37 @@ export function hack(g, playerId, mode = 'classic', opts = {}) {
 
   const tile = g.tiles[KEY(p.core)];
   if (!tile) return fail('Вы не на тайле');
+  if (tile.type === 'router') return routerHack(g, p, tile);
   if (tile.type === 'start') return fail('Точка заражения не взламывается');
   if (isTrap(tile.type)) return fail('Ловушки не взламывают — их просто проходят');
   if (tile.type === 'empty') return fail('Пустой гекс — связующее пространство, взламывать нечего');
   if (!isNode(tile.type)) return fail('Этот тайл нельзя взломать');
-  if (tile.type === 'router' && !g.routerPlaced) return fail('Маршрутизатор ещё не в сети');
-
   if (mode === 'proxy') return proxyHack(g, p, tile);
   return classicHack(g, p, tile, opts);
+}
+
+function routerHack(g, p, tile) {
+  const roll = rollD6(g);
+  const difficulty = 6;
+  spendAction(g);
+
+  if (roll !== 6) {
+    const result = {
+      ...afterAction(g),
+      roll, bonus: 0, difficulty, success: false,
+      notice: `${p.name}: взлом Маршрутизатора провален (${roll} против 6)`,
+    };
+    log(g, `${p.name} пытается взломать Маршрутизатор: ${roll} против 6 — провал.`, { playerId: p.id });
+    return result;
+  }
+
+  log(g, `${p.name} успешно взламывает Центральный Маршрутизатор: 6 против 6. Партия завершена.`, { playerId: p.id });
+  const final = finishGame(g, 'Маршрутизатор успешно взломан');
+  return {
+    ...final,
+    roll, bonus: 0, difficulty, success: true,
+    notice: `${p.name}: взлом Маршрутизатора успешен (6 против 6) — партия окончена`,
+  };
 }
 
 function classicHack(g, p, tile, opts) {
@@ -362,20 +385,33 @@ export function attack(g, playerId, targetPlayerId) {
 
   let outcome;
   if (win && hasPassive(p, 'rootstorm')) {
-    mark.playerId = p.id;
-    mark.placedAt = g.round;
-    mark.via = 'rootstorm';
-    outcome = `RootStorm перезаписывает маркер`;
+    // Победивший RootStorm не создаёт второй собственный маркер на том же узле.
+    const alreadyOwn = tile.markers.some((m) => m.playerId === p.id);
+    if (alreadyOwn) {
+      tile.markers = tile.markers.filter((m) => m !== mark);
+      victim.markersLeft = Math.min(MARKERS_PER_PLAYER, victim.markersLeft + 1);
+      outcome = 'RootStorm вытесняет чужой маркер — ваш уже есть на узле';
+    } else if (p.markersLeft <= 0) {
+      // Атака успешна, но заменить маркер нечем: чужой маркер остаётся.
+      outcome = 'RootStorm не сработал — у игрока закончились маркеры';
+    } else {
+      tile.markers = tile.markers.filter((m) => m !== mark);
+      tile.markers.push({ playerId: p.id, placedAt: g.round, via: 'rootstorm' });
+      p.markersLeft -= 1;
+      victim.markersLeft = Math.min(MARKERS_PER_PLAYER, victim.markersLeft + 1);
+      outcome = 'RootStorm заменяет маркер';
+    }
   } else if (win) {
     tile.markers = tile.markers.filter((m) => m !== mark);
     victim.markersLeft = Math.min(MARKERS_PER_PLAYER, victim.markersLeft + 1);
-    outcome = `маркер вытеснен`;
+    outcome = 'маркер вытеснен';
   } else {
-    outcome = `атака отбита`;
+    outcome = 'атака отбита';
   }
 
-  log(g, `${p.name} атакует ${victim.name}: ${a} против ${d} — ${outcome}.`, { playerId: p.id });
-  return { ...afterAction(g), attackRoll: aRoll, defenseRoll: dRoll, success: win };
+  const notice = `${p.name} атакует узел ${victim.name} ${win ? 'успешно' : 'неуспешно'} (${a} против ${d})`;
+  log(g, `${notice} — ${outcome}.`, { playerId: p.id });
+  return { ...afterAction(g), attackRoll: aRoll, defenseRoll: dRoll, success: win, notice };
 }
 
 /* ------------------------------ РЫНОК ------------------------------ */
@@ -388,6 +424,12 @@ export function buy(g, playerId, cardId) {
   const p = playerById(g, playerId);
   const card = byId(cardId);
   if (!card) return fail('Нет такой карты');
+
+  const conflict = conflictsWith(cardId, new Set(p.cards.map((c) => c.id)));
+  if (conflict) {
+    const conflictName = byId(conflict)?.name ?? conflict;
+    return fail(`Нельзя купить «${card.name}»: конфликтует с «${conflictName}»`);
+  }
 
   const multi = card.multi === true;
 
@@ -711,8 +753,9 @@ export function hasLegalAction(g, playerId) {
     }
   }
 
-  // 2. Взлом на текущем гексе
+  // 2. Взлом на текущем гексе. Маршрутизатор взламывается без маркера.
   const here = g.tiles[KEY(p.core)];
+  if (here && here.type === 'router' && g.routerPlaced) return true;
   if (here && isNode(here.type) && here.type !== 'router') {
     const mine = here.markers.some((m) => m.playerId === playerId);
     const occupied = here.markers.some((m) => m.playerId !== playerId);
