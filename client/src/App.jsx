@@ -141,10 +141,10 @@ function GameTable({ creds, onLeave }) {
   );
 
   const me = state.players.find((p) => p.id === creds.playerId);
-  if (!me) {
-    handleAuthError();
-    return null;
-  }
+  useEffect(() => {
+    if (state && !me) handleAuthError();
+  }, [state, me]);
+  if (!me) return null;
   const myTurn = state.currentPlayerId === creds.playerId;
   const phase = PHASE_INFO[state.phase] ?? PHASE_INFO[1];
 
