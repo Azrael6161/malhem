@@ -70,6 +70,16 @@ export const CARDS = [
     text: 'Разовая. Уничтожить пустой или базовый узел вместе со всеми маркерами — «дыра» в поле.' },
 ];
 
+/** Взаимоисключающие способности с пересекающейся механикой захвата/перезаписи маркеров. */
+export const CARD_CONFLICTS = {
+  proxy_in: ['rootstorm', 'adv_proxy'],
+  adv_proxy: ['rootstorm', 'proxy_in'],
+  rootstorm: ['proxy_in', 'adv_proxy'],
+};
+
+export const conflictsWith = (cardId, ownedIds) =>
+  (CARD_CONFLICTS[cardId] ?? []).find((id) => ownedIds.has(id)) ?? null;
+
 export const byId = (id) => CARDS.find((c) => c.id === id);
 
 /** Стоимость карты с учётом скидки Оптимизатора кода. */
