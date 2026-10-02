@@ -190,6 +190,82 @@ console.log('\nЖИЗНЕННЫЙ ЦИКЛ ПАРТИИ\n');
 }
 
 /* ---------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------- */
+console.log('\nROOTSTORM / ПРОКСИ — конфликт и корректная замена маркера\n');
+{
+  const g = fresh(31);
+  g.pending = null;
+  g.phase = 2;
+  const a = playerById(g, 'p0');
+  const b = playerById(g, 'p1');
+  const node = findNode(g);
+  node.faceUp = true;
+  node.markers.push({ playerId: 'p1', placedAt: 1 });
+  a.core = { q: node.q, r: node.r };
+  a.markersLeft = 1;
+  a.cards.push({ uid: 'exp', id: 'exploit_vbs', level: 'medium', type: 'passive', armed: true, used: false });
+  a.cards.push({ uid: 'rs', id: 'rootstorm', level: 'strong', type: 'passive', armed: true, used: false });
+
+  const proxyBuy = A.buy(g, 'p0', 'proxy_in');
+  check('RootStorm запрещает покупку Прокси-входа', !!proxyBuy.error, proxyBuy.error ?? 'покупка прошла');
+
+  // Для проверки замены даём предсказуемый успешный боевой бросок.
+  g.rngState = 0;
+  g.actionsLeft = 1;
+  const attack = A.attack(g, 'p0', 'p1');
+  const own = node.markers.filter((m) => m.playerId === 'p0');
+  check('RootStorm при успешной атаке создаёт ровно один свой маркер', own.length === 1);
+  check('RootStorm расходует один доступный маркер', a.markersLeft === 0);
+  check('вытесненный маркер возвращается владельцу', b.markersLeft === 7);
+  check('результат атаки содержит числовые броски', Number.isInteger(attack.attackRoll) && Number.isInteger(attack.defenseRoll));
+}
+
+/* ---------------------------------------------------------------- */
+console.log('\nМАРШРУТИЗАТОР — автоматическое появление и взлом без маркера\n');
+{
+  const g = fresh(32);
+  g.pending = null;
+  const a = playerById(g, 'p0');
+  a.points = 25;
+  g.actionsLeft = 1;
+
+  const after = A.afterAction(g);
+  const router = Object.values(g.tiles).find((t) => t.type === 'router');
+  check('Маршрутизатор появляется автоматически', !!router && g.routerPlaced === true);
+  check('для появления Маршрутизатора не создаётся pending размещения', !g.pending);
+
+  if (router) {
+    a.core = { q: router.q, r: router.r };
+    a.markersLeft = 0;
+    g.actionsLeft = 1;
+    g.rngState = 0; // первый бросок d6 = 6
+    const hack = A.hack(g, 'p0', 'classic');
+    check('Маршрутизатор можно взламывать без своего маркера', !hack.error);
+    check('успешный взлом Маршрутизатора сразу завершает игру',
+      hack.success === true && g.status === 'finished');
+  }
+}
+
+/* ---------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------- */
+console.log('\nМАРКЕРЫ — количество зависит от узлов и игроков\n');
+{
+  const g2 = fresh(41);
+  check('2 игрока получают 7 маркеров при 12 узлах', g2.players.every((p) => p.markersLeft === 7));
+
+  const g3 = A.createGame({ seed: 42, playerDefs: [
+    { id: 'p0', name: 'P0' }, { id: 'p1', name: 'P1' }, { id: 'p2', name: 'P2' },
+  ]});
+  check('3 игрока получают 5 маркеров при 12 узлах', g3.players.every((p) => p.markersLeft === 5));
+
+  const g4 = A.createGame({ seed: 43, playerDefs: [
+    { id: 'p0', name: 'P0' }, { id: 'p1', name: 'P1' }, { id: 'p2', name: 'P2' }, { id: 'p3', name: 'P3' },
+  ]});
+  check('4 игрока получают стандартные 10 маркеров', g4.players.every((p) => p.markersLeft === 10));
+}
+
 console.log(`\n${'─'.repeat(46)}`);
 console.log(`  пройдено ${passed} · провалено ${failed}`);
 console.log(`${'─'.repeat(46)}\n`);

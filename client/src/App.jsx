@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { Component, useCallback, useEffect, useState } from 'react';
 import { useGameSocket } from './useGameSocket.js';
 import HexBoard from './board/HexBoard.jsx';
 import HUD from './components/HUD.jsx';
@@ -8,6 +8,31 @@ import Hand from './components/Hand.jsx';
 import RansomPanel from './components/RansomPanel.jsx';
 import PendingOverlay from './components/PendingOverlay.jsx';
 import { PHASE_INFO, COLOR_HEX } from './constants.js';
+
+class AppErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { failed: false, message: '' };
+  }
+  static getDerivedStateFromError(error) {
+    return { failed: true, message: error?.message || 'Неизвестная ошибка интерфейса' };
+  }
+  componentDidCatch(error) {
+    console.error('[MALHEM UI]', error);
+  }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="lobby-screen" style={{ textAlign: 'center' }}>
+        <h2>Интерфейс игры восстановился некорректно</h2>
+        <p style={{ color: '#888', maxWidth: 520, margin: '10px auto' }}>{this.state.message}</p>
+        <button className="btn primary" onClick={() => this.setState({ failed: false, message: '' })}>
+          Повторить без перезагрузки
+        </button>
+      </div>
+    );
+  }
+}
 
 export default function App() {
   const [creds, setCreds] = useState(() => {
@@ -64,21 +89,42 @@ export default function App() {
     );
   }
 
-  return <GameTable creds={creds} onLeave={() => { localStorage.removeItem('malhem'); setCreds(null); }} />;
+  return <AppErrorBoundary><GameTable creds={creds} onLeave={() => { localStorage.removeItem('malhem'); setCreds(null); }} /></AppErrorBoundary>;
 }
 
 function GameTable({ creds, onLeave }) {
+  // ============================================================
+  // БЛОК ХУКОВ. Всё, что ниже этого блока до ранних return'ов —
+  // хуки вызываются на каждом рендере, в одном и том же порядке.
+  // Никогда не ставьте useState/useEffect/useRef ПОСЛЕ if (...return).
+  // ============================================================
 
-  const handleAuthError = () => {
+  const handleAuthError = useCallback(() => {
     localStorage.removeItem('malhem');
     onLeave();
-  };
+  }, [onLeave]);
 
   const { state, send, error, notice, connected } = useGameSocket(creds, handleAuthError);
   const [tab, setTab] = useState('market');
   const [targetMode, setTargetMode] = useState(null);
 
-  useEffect(() => { if (!state?.pending) setTargetMode(null); }, [state?.pending]);
+  // Сбрасываем режим выбора цели, когда pending ушёл.
+  useEffect(() => {
+    if (!state?.pending) setTargetMode(null);
+  }, [state?.pending]);
+
+  // Если игрока нет среди участников комнаты — выкидываем в лобби.
+  // Раньше этот useEffect стоял НИЖЕ ранних return'ов, из-за чего
+  // React на разных рендерах видел разное число хуков и падал с
+  // «Rendered more hooks than during the previous render».
+  const meExists = !!state?.players?.some((p) => p.id === creds.playerId);
+  useEffect(() => {
+    if (state && !meExists) handleAuthError();
+  }, [state, meExists, handleAuthError]);
+
+  // ============================================================
+  // РАННИЕ RETURN'Ы — только после того, как все хуки вызваны.
+  // ============================================================
 
   if (state?.status === 'lobby') {
     const link = `${location.origin}?room=${state.roomId}`;
@@ -115,11 +161,16 @@ function GameTable({ creds, onLeave }) {
     </div>
   );
 
-  const me = state.players.find((p) => p.id === creds.playerId);
-  const myTurn = state.currentPlayerId === creds.playerId;
-  const phase = PHASE_INFO[state.phase];
+  // ============================================================
+  // Ниже хуков НЕТ. Только вычисления и JSX.
+  // ============================================================
 
-  /** Клик по гексу в режиме выбора цели. */
+  const me = state.players.find((p) => p.id === creds.playerId);
+  if (!me) return null;   // сюда мы попадём на одном кадре, пока useEffect выше выкидывает в лобби
+
+  const myTurn = state.currentPlayerId === creds.playerId;
+  const phase = PHASE_INFO[state.phase] ?? PHASE_INFO[1];
+
   const handleSelect = (tile) => {
     if (!targetMode) return;
     const { cardId, anchor } = targetMode;
@@ -142,8 +193,6 @@ function GameTable({ creds, onLeave }) {
   };
 
   const inExpansion = myTurn && state.pending?.type === 'place_tile';
-
-  // Класс notice: удача/провал взлома красим по-разному.
   const noticeIsFail = notice && /не удалось|провал|отбит/i.test(notice);
 
   return (
@@ -158,7 +207,6 @@ function GameTable({ creds, onLeave }) {
           Резерв: <b>{state.reserveCount}</b>
         </div>
 
-        {/* Результат последнего действия (взлом/атака/расширение). */}
         {notice && (
           <div className={`header-notice ${noticeIsFail ? 'bad' : 'good'}`}>
             {notice}
@@ -184,6 +232,15 @@ function GameTable({ creds, onLeave }) {
         </aside>
 
         <section className="center">
+          {notice && (
+            <div
+              className={`header-notice board-notice ${noticeIsFail ? 'bad' : 'good'}`}
+              role="status"
+              aria-live="polite"
+            >
+              {notice}
+            </div>
+          )}
           <HexBoard
             tiles={state.tiles}
             players={state.players}

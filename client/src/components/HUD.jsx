@@ -14,7 +14,8 @@ export default function HUD({ state, me, myTurn, send, phase }) {
   const busy = !!state.pending;
   const myMarker = tile?.markers.some((m) => m.playerId === me.id);
   const enemyMarker = tile?.markers.some((m) => m.playerId !== me.id);
-  const hackable = tile && ['basic', 'medium', 'hard', 'router'].includes(tile.type) && !myMarker;
+  const hackable = tile && ['basic', 'medium', 'hard'].includes(tile.type) && !myMarker;
+  const routerHackable = tile?.type === 'router';
 
   const difficulty = { basic: 1, medium: 4, hard: 5, router: 6 }[tile?.type];
   const hasProxy = me.cards.some((c) => ['proxy_in', 'adv_proxy'].includes(c.id) && c.armed && !c.used);
@@ -52,10 +53,10 @@ export default function HUD({ state, me, myTurn, send, phase }) {
       </div>
 
       <div className="actions">
-        <button className="btn primary" disabled={canDisabled || !hackable}
+        <button className="btn primary" disabled={canDisabled || (!hackable && !routerHackable)}
           onClick={() => send('hack', { mode: 'classic', zeroDay })}
-          title="Бросок 1d6 против сложности узла">
-          Взломать{difficulty ? ` (${difficulty === 1 ? 'авто' : `${difficulty}+`})` : ''}
+          title={routerHackable ? 'Маршрутизатор взламывается без маркера — нужна ровно 6' : 'Бросок 1d6 против сложности узла'}>
+          {routerHackable ? 'Взломать Маршрутизатор (6)' : `Взломать${difficulty ? ` (${difficulty === 1 ? 'авто' : `${difficulty}+`})` : ''}`}
         </button>
 
         {hasZeroDay && (
@@ -69,13 +70,6 @@ export default function HUD({ state, me, myTurn, send, phase }) {
           <button className="btn" disabled={canDisabled}
             onClick={() => send('hack', { mode: 'proxy' })}>
             Прокси-вход ({tile?.type === 'hard' ? 2 : 1} C)
-          </button>
-        )}
-
-        {tile?.type === 'router' && !myMarker && (
-          <button className="btn danger" disabled={canDisabled}
-            onClick={() => send('hack', { mode: 'classic' })}>
-            Штурм Маршрутизатора — нужна ровно 6
           </button>
         )}
 
