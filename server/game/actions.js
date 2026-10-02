@@ -1,10 +1,10 @@
 import { keyOf, neighbors, distance } from './hex.js';
 import { TILE_INFO, isNode, isTrap } from './tiles.js';
-import { byId, costFor, CARD_LEVELS } from './cards.js';
+import { byId, costFor, CARD_LEVELS, conflictsWith } from './cards.js';
 import { rollD6 } from './rng.js';
 import {
   currentPlayer, playerById, log, advanceTurn, hasPassive,
-  checkRouterTrigger, expansionSlots,
+  checkRouterTrigger, expansionSlots, finishGame, recomputePoints,
 } from './state.js';
 import { RANSOM_COST, MARKERS_PER_PLAYER, CAPTURE_BOUNTY } from './config.js';
 
@@ -19,10 +19,6 @@ function checkTurn(g, playerId) {
   return g.status === 'playing' && currentPlayer(g)?.id === playerId;
 }
 
-/**
- * Единый страж: не твой ход / незакрытый шаг / ход исчерпан.
- * Если действия кончились — это не ошибка, а переход к обязательному расширению.
- */
 function blocked(g, playerId) {
   if (!checkTurn(g, playerId)) return fail('Не ваш ход');
   if (g.pending) return fail('Сначала завершите текущий шаг');
@@ -35,7 +31,6 @@ function blocked(g, playerId) {
 
 /* ------------------------- ВЫПЛАТА ДАНИ ------------------------- */
 
-/** Снять блокировку Ransomware: доступно в любой момент, действий не тратит. */
 export function payRansom(g, playerId, tileKey) {
   const p = playerById(g, playerId);
   const tile = g.tiles[tileKey];
@@ -56,7 +51,6 @@ export function payRansom(g, playerId, tileKey) {
 
 /* ------------------------- ХОД И ПЕРЕХОДЫ ------------------------- */
 
-/** После действия: триггер Маршрутизатора → проверка «есть чем заняться» → расширение. */
 export function afterAction(g) {
   if (g.status !== 'playing') return { ok: true };
   if (checkRouterTrigger(g)) return { ok: true, awaiting: 'place_router' };
@@ -96,19 +90,14 @@ export function endTurn(g) {
   return advanceTurn(g);
 }
 
-/** Досрочная передача хода. Разрешена только если полезных действий не осталось. */
 export function pass(g, playerId) {
   if (!checkTurn(g, playerId)) return fail('Не ваш ход');
 
-  // Разрешаем завершить ход, если висит необязательное расширение сети.
-  // Игрок имеет право отказаться от размещения тайла из резерва.
   if (g.pending) {
     if (g.pending.playerId === playerId && g.pending.type === 'place_tile') {
       g.pending = null;
       return endTurn(g);
     }
-    // Любой другой pending завершать через pass нельзя —
-    // там игрок обязан сделать выбор (карта, цель атаки и т.д.).
     return fail('Завершите текущий шаг');
   }
 
@@ -216,14 +205,37 @@ export function hack(g, playerId, mode = 'classic', opts = {}) {
 
   const tile = g.tiles[KEY(p.core)];
   if (!tile) return fail('Вы не на тайле');
+  if (tile.type === 'router') return routerHack(g, p, tile);
   if (tile.type === 'start') return fail('Точка заражения не взламывается');
   if (isTrap(tile.type)) return fail('Ловушки не взламывают — их просто проходят');
   if (tile.type === 'empty') return fail('Пустой гекс — связующее пространство, взламывать нечего');
   if (!isNode(tile.type)) return fail('Этот тайл нельзя взломать');
-  if (tile.type === 'router' && !g.routerPlaced) return fail('Маршрутизатор ещё не в сети');
-
   if (mode === 'proxy') return proxyHack(g, p, tile);
   return classicHack(g, p, tile, opts);
+}
+
+function routerHack(g, p, tile) {
+  const roll = rollD6(g);
+  const difficulty = 6;
+  spendAction(g);
+
+  if (roll !== 6) {
+    const result = {
+      ...afterAction(g),
+      roll, bonus: 0, difficulty, success: false,
+      notice: `${p.name}: взлом Маршрутизатора провален (${roll} против 6)`,
+    };
+    log(g, `${p.name} пытается взломать Маршрутизатор: ${roll} против 6 — провал.`, { playerId: p.id });
+    return result;
+  }
+
+  log(g, `${p.name} успешно взламывает Центральный Маршрутизатор: 6 против 6. Партия завершена.`, { playerId: p.id });
+  const final = finishGame(g, 'Маршрутизатор успешно взломан');
+  return {
+    ...final,
+    roll, bonus: 0, difficulty, success: true,
+    notice: `${p.name}: взлом Маршрутизатора успешен (6 против 6) — партия окончена`,
+  };
 }
 
 function classicHack(g, p, tile, opts) {
@@ -246,7 +258,7 @@ function classicHack(g, p, tile, opts) {
   let success;
 
   if (isRouter) {
-    roll = rollD6(g);                        // чистая 6, модификаторы не работают
+    roll = rollD6(g);
     success = roll === 6;
   } else if (useZeroDay) {
     success = true;
@@ -261,22 +273,21 @@ function classicHack(g, p, tile, opts) {
   spendAction(g);
 
   if (!success) {
-  return {
-    ...afterAction(g),
-    roll, bonus, difficulty: info.difficulty, success: false,
-    notice: `${p.name}: взлом провален (${roll}${bonus ? `+${bonus}` : ''} против ${info.difficulty})`,
+    return {
+      ...afterAction(g),
+      roll, bonus, difficulty: info.difficulty, success: false,
+      notice: `${p.name}: взлом провален (${roll}${bonus ? `+${bonus}` : ''} против ${info.difficulty})`,
     };
   }
 
   const gain = capture(g, p, tile);
   return {
-  ...afterAction(g),
-  roll, bonus, difficulty: info.difficulty, success: true, captured: true, ...gain,
-  notice: `${p.name} успешно взломал узел +${gain.coins}C`,
+    ...afterAction(g),
+    roll, bonus, difficulty: info.difficulty, success: true, captured: true, ...gain,
+    notice: `${p.name} успешно взломал узел${gain.coins ? ` +${gain.coins}C` : ''}`,
   };
 }
 
-/** Паразитический взлом: Прокси-вход (базовый/средний) либо Продвинутый Прокси (сложный). */
 function proxyHack(g, p, tile) {
   if (tile.type === 'router') return fail('К Маршрутизатору только честный бросок — нужна 6');
   if (tile.markers.some((m) => m.playerId === p.id)) return fail('У вас уже есть маркер на этом узле');
@@ -296,7 +307,7 @@ function proxyHack(g, p, tile) {
   const host = tile.markers.find((m) => m.playerId !== p.id);
   if (!isHard && host) {
     const owner = playerById(g, host.playerId);
-    if (owner) owner.coins += fee;          // базовый Прокси платит владельцу узла
+    if (owner) owner.coins += fee;
   }
 
   card.used = true;
@@ -308,22 +319,35 @@ function proxyHack(g, p, tile) {
 
 /**
  * Захват узла.
- * Очки — несгораемая «сумма всех завоеваний», она же финальный результат.
- * Ко́ины — разовый куш, который сразу можно пустить на рынок.
+ *  - Очки: пересчитываются через recomputePoints — живая сумма удержания.
+ *  - Коины: разово, только при ПЕРВОМ успешном вскрытии этого узла игроком.
+ *           Отметка живёт в p.capturedTiles и никогда не снимается.
  */
 function capture(g, p, tile) {
   const info = TILE_INFO[tile.type];
-  let coins = CAPTURE_BOUNTY[tile.type] ?? 0;
-  if (hasPassive(p, 'adware')) coins += 1;
-  const points = info.points ?? 0;
+  const key = KEY(tile);
 
   tile.markers.push({ playerId: p.id, placedAt: g.round, via: 'hack' });
   p.markersLeft -= 1;
-  p.coins += coins;
-  p.points += points;
 
-  log(g, `${p.name} захватывает ${info.label}: +${points} очк. к итогу, +${coins} C на руку.`, { playerId: p.id, points, coins });
-  return { points, coins };
+  const firstTime = !p.capturedTiles.has(key);
+  let coins = 0;
+  if (firstTime) {
+    coins = CAPTURE_BOUNTY[tile.type] ?? 0;
+    if (hasPassive(p, 'adware')) coins += 1;
+    p.coins += coins;
+    p.capturedTiles.add(key);
+  }
+
+  const newPoints = recomputePoints(g, p);
+
+  const points = info.points ?? 0;
+  if (firstTime) {
+    log(g, `${p.name} захватывает ${info.label}: +${points} очк., +${coins} C на руку.`, { playerId: p.id, points, coins });
+  } else {
+    log(g, `${p.name} возвращает ${info.label}: +${points} очк. (коины за этот узел уже получены).`, { playerId: p.id, points, coins: 0 });
+  }
+  return { points, coins, totalPoints: newPoints, firstTime };
 }
 
 /* ------------------------------ АТАКА ------------------------------ */
@@ -352,30 +376,50 @@ export function attack(g, playerId, targetPlayerId) {
 
   spendAction(g);
 
-  const atkBonus = 1;                                        // Exploit.vbs
-  const defBonus = hasPassive(victim, 'firewall') ? 2 : 0;   // Firewall
+  const atkBonus = 1;
+  const defBonus = hasPassive(victim, 'firewall') ? 2 : 0;
   const aRoll = rollD6(g);
   const dRoll = rollD6(g);
   const a = aRoll + atkBonus;
   const d = dRoll + defBonus;
-  const win = a >= d;                                        // ничья — в пользу атакующего
+  const win = a >= d;
 
   let outcome;
   if (win && hasPassive(p, 'rootstorm')) {
-    mark.playerId = p.id;
-    mark.placedAt = g.round;
-    mark.via = 'rootstorm';
-    outcome = `RootStorm перезаписывает маркер`;
+    const alreadyOwn = tile.markers.some((m) => m.playerId === p.id);
+    if (alreadyOwn) {
+      tile.markers = tile.markers.filter((m) => m !== mark);
+      victim.markersLeft = Math.min(MARKERS_PER_PLAYER, victim.markersLeft + 1);
+      outcome = 'RootStorm вытесняет чужой маркер — ваш уже есть на узле';
+    } else if (p.markersLeft <= 0) {
+      outcome = 'RootStorm не сработал — у игрока закончились маркеры';
+    } else {
+      tile.markers = tile.markers.filter((m) => m !== mark);
+      tile.markers.push({ playerId: p.id, placedAt: g.round, via: 'rootstorm' });
+      p.markersLeft -= 1;
+      victim.markersLeft = Math.min(MARKERS_PER_PLAYER, victim.markersLeft + 1);
+      outcome = 'RootStorm заменяет маркер';
+    }
   } else if (win) {
     tile.markers = tile.markers.filter((m) => m !== mark);
     victim.markersLeft = Math.min(MARKERS_PER_PLAYER, victim.markersLeft + 1);
-    outcome = `маркер вытеснен`;
+    outcome = 'маркер вытеснен';
   } else {
-    outcome = `атака отбита`;
+    outcome = 'атака отбита';
   }
 
-  log(g, `${p.name} атакует ${victim.name}: ${a} против ${d} — ${outcome}.`, { playerId: p.id });
-  return { ...afterAction(g), attackRoll: aRoll, defenseRoll: dRoll, success: win };
+  // Пересчитываем очки у обоих участников. При вытеснении маркера
+  // очки жертвы падают на ценность узла (или на его долю в удержании).
+  if (win) recomputePoints(g, victim);
+  if (win && hasPassive(p, 'rootstorm') && !tile.markers.some((m) => m.playerId === p.id)) {
+    // RootStorm не сработал (нет маркеров) — очков победителю не прибавилось.
+  } else if (win && tile.markers.some((m) => m.playerId === p.id)) {
+    recomputePoints(g, p);
+  }
+
+  const notice = `${p.name} атакует узел ${victim.name} ${win ? 'успешно' : 'неуспешно'} (${a} против ${d})`;
+  log(g, `${notice} — ${outcome}.`, { playerId: p.id });
+  return { ...afterAction(g), attackRoll: aRoll, defenseRoll: dRoll, success: win, notice };
 }
 
 /* ------------------------------ РЫНОК ------------------------------ */
@@ -389,10 +433,15 @@ export function buy(g, playerId, cardId) {
   const card = byId(cardId);
   if (!card) return fail('Нет такой карты');
 
+  const conflict = conflictsWith(cardId, new Set(p.cards.map((c) => c.id)));
+  if (conflict) {
+    const conflictName = byId(conflict)?.name ?? conflict;
+    return fail(`Нельзя купить «${card.name}»: конфликтует с «${conflictName}»`);
+  }
+
   const multi = card.multi === true;
 
   if (multi) {
-    // Многотиражная карта: каждый покупает один раз, экземпляр рынка не тратится.
     if (p.cards.some((c) => c.id === cardId)) {
       return fail('У вас уже есть эта способность');
     }
@@ -406,7 +455,6 @@ export function buy(g, playerId, cardId) {
 
   p.coins -= cost;
 
-  // Обычные карты уходят с рынка навсегда, многотиражные — остаются.
   if (!multi) {
     const pool = g.market[card.level];
     pool.splice(pool.indexOf(cardId), 1);
@@ -417,7 +465,7 @@ export function buy(g, playerId, cardId) {
     id: cardId,
     level: card.level,
     type: card.type,
-    armed: false,        // включится с началом следующего хода владельца
+    armed: false,
     used: false,
   });
 
@@ -427,15 +475,6 @@ export function buy(g, playerId, cardId) {
 
 /* --------------------- РАЗОВЫЕ СПОСОБНОСТИ (UI) --------------------- */
 
-/**
- * Все активные способности идут сюда. payload зависит от targeting карты:
- *   ownNode       -> { q, r }
- *   anyNode       -> { q, r }
- *   enemyMarker   -> { q, r, targetPlayerId }
- *   adjacentBasic -> { q, r } (Spoofing ищет пару сам, либо a и b)
- *   ownBasicCard  -> { uid, cardId }
- *   none          -> {}
- */
 export function useAbility(g, playerId, cardId, payload = {}) {
   if (!checkTurn(g, playerId)) return fail('Не ваш ход');
   const p = playerById(g, playerId);
@@ -444,12 +483,7 @@ export function useAbility(g, playerId, cardId, payload = {}) {
 
   switch (cardId) {
 
-    /* ---------- базовый уровень ---------- */
-
     case 'sniffer': {
-    // Приватная разведка: закрытые тайлы вокруг текущей позиции игрока.
-    // В гекс-сетке ровно 6 соседей — берём их явно (а не через двойной цикл -1..1,
-    // который давал лишние «диагонали»).
       const found = {};
       const DIRS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
       for (const [dq, dr] of DIRS) {
@@ -498,8 +532,6 @@ export function useAbility(g, playerId, cardId, payload = {}) {
       return afterAction(g);
     }
 
-    /* ---------- средний уровень ---------- */
-
     case 'polymorph': {
       const own = p.cards.find((c) => c.uid === payload.uid && c.level === 'basic');
       if (!own) return fail('Выберите свою базовую способность');
@@ -518,7 +550,7 @@ export function useAbility(g, playerId, cardId, payload = {}) {
         id: newId,
         level: 'basic',
         type: fresh.type,
-        armed: true,       // подмена действует сразу
+        armed: true,
         used: false,
       });
       card.used = true;
@@ -527,7 +559,6 @@ export function useAbility(g, playerId, cardId, payload = {}) {
     }
 
     case 'spoofing': {
-      // Принимаем либо пару a/b, либо один узел — тогда пара подбирается автоматически.
       let A = payload.a ? g.tiles[KEY(payload.a)] : null;
       let B = payload.b ? g.tiles[KEY(payload.b)] : null;
 
@@ -554,15 +585,20 @@ export function useAbility(g, playerId, cardId, payload = {}) {
       if (!myMark || !enemyMark) return fail('Нужен ваш маркер и чужой на этих двух узлах');
       if (myMark === enemyMark) return fail('Это один и тот же маркер');
 
-      const enemyOwner = enemyMark.playerId;
+      const enemyOwnerId = enemyMark.playerId;
+      const enemyOwner = playerById(g, enemyOwnerId);
+
       enemyMark.playerId = p.id;
-      myMark.playerId = enemyOwner;
+      myMark.playerId = enemyOwnerId;
       card.used = true;
+
+      // Маркеры поменялись — очки обоих нужно пересчитать.
+      recomputePoints(g, p);
+      if (enemyOwner) recomputePoints(g, enemyOwner);
+
       log(g, `${p.name} подменяет адреса (Spoofing) — маркеры меняются местами.`, { playerId: p.id });
       return { ok: true };
     }
-
-    /* ---------- сильный уровень ---------- */
 
     case 'ransomware': {
       const tile = g.tiles[KEY(payload)];
@@ -598,6 +634,10 @@ export function useAbility(g, playerId, cardId, payload = {}) {
         return fail('Логическая бомба рвёт только пустые и базовые гексы');
       }
 
+      // Собираем всех владельцев маркеров до удаления тайла,
+      // чтобы после delete пересчитать им очки.
+      const owners = [...new Set(tile.markers.map((m) => m.playerId))];
+
       for (const m of tile.markers) {
         const owner = playerById(g, m.playerId);
         if (owner) owner.markersLeft = Math.min(MARKERS_PER_PLAYER, owner.markersLeft + 1);
@@ -605,6 +645,13 @@ export function useAbility(g, playerId, cardId, payload = {}) {
       const gone = TILE_INFO[tile.type].label;
       delete g.tiles[KEY(tile)];
       card.used = true;
+
+      // Маркеры исчезли вместе с тайлом — очки удержания падают.
+      for (const ownerId of owners) {
+        const owner = playerById(g, ownerId);
+        if (owner) recomputePoints(g, owner);
+      }
+
       log(g, `${p.name} подрывает ${gone} — в матрице остаётся «дыра».`, { playerId: p.id });
       return { ok: true };
     }
@@ -621,7 +668,6 @@ export function placeTile(g, playerId, slot, reserveIndex = 0) {
   if (!pend || pend.playerId !== playerId) return fail('Сейчас не ваш шаг');
   const p = currentPlayer(g);
 
-  // Шаг выбора после Ботнет-сканера: осмотрели два тайла, один берём.
   if (pend.type === 'choose_expansion') {
     const chosen = pend.options[reserveIndex];
     if (!chosen) return fail('Выберите тайл из сканирования');
@@ -629,8 +675,6 @@ export function placeTile(g, playerId, slot, reserveIndex = 0) {
     if (!type) return fail('Резерв пуст');
     g.reserve.splice(chosen.index, 1);
 
-    // Проверяем, есть ли вообще куда расширяться. Если нет — сразу завершаем ход,
-    // иначе клиент зависнет в режиме 'place_tile' с пустым списком слотов.
     const options = expansionSlots(g);
     if (options.length === 0) {
       log(g, `${p.name} выбирает тайл из сканирования, но расширяться некуда — ход переходит дальше.`, { playerId });
@@ -645,8 +689,6 @@ export function placeTile(g, playerId, slot, reserveIndex = 0) {
 
   if (pend.type !== 'place_tile') return fail('Сейчас не ваш шаг расширения');
 
-  // Валидация слота: клиент мог прислать слот, которого нет в options
-  // (устаревшее состояние, двойной клик, попытка положить тайл не к своей грани).
   if (!slot || !pend.options.some((o) => o.q === slot.q && o.r === slot.r)) {
     return fail('Тайл можно положить только к открытой грани сети');
   }
@@ -665,24 +707,12 @@ export function placeTile(g, playerId, slot, reserveIndex = 0) {
   g.tiles[KEY(slot)] = { q: slot.q, r: slot.r, type, faceUp: false, markers: [], blockedFor: [] };
   log(g, `${p.name} расширяет сеть — открыт новый гекс.`, { playerId });
 
-  // Явно сбрасываем pending, чтобы не осталось «висящего» ожидания,
-  // если endTurn по какой-то причине не тронет это поле.
   g.pending = null;
   return endTurn(g);
 }
 
 export function placeRouter(g, playerId, slot) {
-  const pend = g.pending;
-  if (!pend || pend.type !== 'place_router' || pend.playerId !== playerId) {
-    return fail('Сейчас не время для Маршрутизатора');
-  }
-  if (!pend.options.some((o) => o.q === slot.q && o.r === slot.r)) {
-    return fail('Маршрутизатор нужно пристыковать к открытому краю сети');
-  }
-  g.tiles[KEY(slot)] = { q: slot.q, r: slot.r, type: 'router', faceUp: true, markers: [], blockedFor: [] };
-  g.pending = null;
-  log(g, '★ Центральный Маршрутизатор подключён к сети. Финальный штурм начинается!');
-  return { ok: true };
+  return fail('Маршрутизатор размещается автоматически');
 }
 
 export function chooseDrop(g, playerId, uid) {
@@ -702,7 +732,6 @@ export function hasLegalAction(g, playerId) {
   if (!p || g.status !== 'playing') return false;
   const range = hasPassive(p, 'worm_exe') ? 2 : 1;
 
-  // 1. Шаг на закрытый тайл
   for (let dq = -range; dq <= range; dq++) {
     for (let dr = Math.max(-range, -dq - range); dr <= Math.min(range, -dq + range); dr++) {
       if (!dq && !dr) continue;
@@ -711,8 +740,8 @@ export function hasLegalAction(g, playerId) {
     }
   }
 
-  // 2. Взлом на текущем гексе
   const here = g.tiles[KEY(p.core)];
+  if (here && here.type === 'router' && g.routerPlaced) return true;
   if (here && isNode(here.type) && here.type !== 'router') {
     const mine = here.markers.some((m) => m.playerId === playerId);
     const occupied = here.markers.some((m) => m.playerId !== playerId);
@@ -721,26 +750,20 @@ export function hasLegalAction(g, playerId) {
     if (!mine && occupied && p.cards.some((c) => ['proxy_in', 'adv_proxy'].includes(c.id))) return true;
   }
 
-  // 3. Атака
   if (g.phase >= 2 && here && hasPassive(p, 'exploit_vbs') &&
       here.markers.some((m) => m.playerId !== playerId)) return true;
 
-  // 4. Рынок
-  // 4. Рынок
   for (const lvl of ['basic', 'medium', 'strong']) {
     for (const id of g.market[lvl]) {
       const card = byId(id);
       if (!card) continue;
-      // Многотиражные карты, которые у игрока уже есть, не считаем «доступными» —
-      // иначе система ошибочно решит, что игроку есть чем заняться.
       if (card.multi && p.cards.some((c) => c.id === id)) continue;
       if (p.coins >= costFor(card, { hasOptimizer: hasPassive(p, 'code_optimizer') })) return true;
     }
   }
 
-  // 5. Разовые активные способности
   if (p.cards.some((c) => c.armed && !c.used &&
       ['sniffer', 'backdoor', 'ddos', 'ransomware', 'logic_bomb'].includes(c.id))) return true;
 
   return false;
-}
+};

@@ -1,18 +1,21 @@
 /** Реестр карт кода — ровно как в справочнике правил. */
 export const CARD_LEVELS = {
-  basic: { level: 'basic', label: 'Базовый', cost: 2 },
+  basic:  { level: 'basic',  label: 'Базовый', cost: 2 },
   medium: { level: 'medium', label: 'Средний', cost: 4 },
   strong: { level: 'strong', label: 'Сильный', cost: 6 },
 };
 
 /**
  * targeting — что карте нужно от игрока в UI:
- *   none     — жать кнопку и всё
- *   ownNode  — выбрать свой узел
- *   anyNode  — выбрать любой узел на поле
- *   enemyMarker — выбрать чужой маркер на моём гексе
+ *   none          — жать кнопку и всё
+ *   ownNode       — выбрать свой узел
+ *   anyNode       — выбрать любой узел на поле
+ *   enemyMarker   — выбрать чужой маркер на моём гексе
  *   adjacentBasic — выбрать два соседних базовых узла
  *   ownBasicCard  — выбрать свою базовую карту + карту с рынка
+ *
+ * multi: true — карта не уникальна на рынке: каждый игрок может купить
+ *               её один раз, экземпляр рынка не тратится.
  */
 export const CARDS = [
   // --- Базовый уровень (2 C) ---
@@ -77,3 +80,41 @@ export function costFor(card, { hasOptimizer = false } = {}) {
   const base = CARD_LEVELS[card.level].cost;
   return card.level === 'strong' && hasOptimizer ? Math.max(0, base - 1) : base;
 }
+
+/**
+ * Таблица взаимоисключающих карт. Пары неупорядоченные:
+ * если у игрока уже есть одна карта из пары, вторую купить нельзя.
+ *
+ * Логика подбора:
+ *  - adware vs script_kiddie  — «жадность» против «точности»:
+ *    либо ты зарабатываешь больше с каждой удачи, либо чаще попадаешь по средним.
+ *  - encryptor vs rootstorm   — «защита» против «агрессии»:
+ *    либо твой маркер нельзя трогать на базовых, либо ты вытесняешь чужие вместо удаления.
+ *  - firewall vs rootstorm    — «оборона» против «нападения»:
+ *    нельзя одновременно иметь лучшую защиту и лучшую замену.
+ *  - ai_upgrade vs code_optimizer — «скорость» против «дешевизны»:
+ *    либо больше действий, либо дешевле сильные карты.
+ *  - cyber_immunity vs rootkit — две разные «иммунки» на ловушки:
+ *    нельзя одновременно игнорировать и Антивирус/IDS, и Карантин.
+ */
+const CONFLICTS = [
+  ['adware', 'script_kiddie'],
+  ['encryptor', 'rootstorm'],
+  ['firewall', 'rootstorm'],
+  ['ai_upgrade', 'code_optimizer'],
+  ['cyber_immunity', 'rootkit'],
+];
+
+/**
+ * Есть ли конфликт между покупаемой картой и уже имеющимися у игрока.
+ * @param {string} cardId           — id покупаемой карты
+ * @param {Set<string>} ownedIds    — множество id уже имеющихся карт
+ * @returns {string|null}           — id конфликтующей карты, либо null
+ */
+export function conflictsWith(cardId, ownedIds) {
+  for (const [a, b] of CONFLICTS) {
+    if (cardId === a && ownedIds.has(b)) return b;
+    if (cardId === b && ownedIds.has(a)) return a;
+  }
+  return null;
+};

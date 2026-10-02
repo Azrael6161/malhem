@@ -1,5 +1,5 @@
-import { createGame, startGame, currentPlayer, isBlocked, log as pushLog } from './game/state.js';
-import { CARD_LEVELS, byId } from './game/cards.js';
+import { createGame, startGame, currentPlayer, log as pushLog } from './game/state.js';
+import { byId } from './game/cards.js';
 import { RANSOM_COST } from './game/config.js';
 import * as A from './game/actions.js';
 
@@ -50,8 +50,15 @@ export function addPlayer(room, name) {
     id, name: clean,
     color: ['red', 'blue', 'green', 'yellow'][seat],
     seat,
-    coins: 3, points: 0, cards: [], markersLeft: 10,
-    core: { q: 0, r: 0 }, skipTurns: 0, skipActions: 0, isBot: false,
+    coins: 3,
+    points: 0,
+    capturedTiles: new Set(),   // ключи узлов, за первое вскрытие которых уже выданы коины
+    cards: [],
+    markersLeft: 10,
+    core: { q: 0, r: 0 },
+    skipTurns: 0,
+    skipActions: 0,
+    isBot: false,
   });
   return { id, name: clean };
 }
@@ -119,11 +126,10 @@ export function viewFor(room, playerId) {
         name: p.name,
         color: p.color,
         coins: p.coins,
-        points: p.points,                 // очки открыты — это публичный счёт завоеваний
+        points: p.points,
         markersLeft: p.markersLeft,
         core: p.core,
         skipTurns: p.skipTurns,
-        // Карты соперников скрыты до момента, когда они «включились».
         cards: isMe
           ? p.cards
           : p.cards.filter((c) => c.armed).map((c) => ({ ...c, id: c.id, armed: true, used: c.used })),
@@ -143,7 +149,7 @@ export function viewFor(room, playerId) {
         canPay: b.playerId === playerId,
       })),
       hasMyMarker: t.markers.some((m) => m.playerId === playerId),
-      peek: myPeek[`${t.q},${t.r}`] ?? null,   // приватная подсказка Сниффера
+      peek: myPeek[`${t.q},${t.r}`] ?? null,
     })),
 
     pending: g.pending

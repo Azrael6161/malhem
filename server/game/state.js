@@ -20,7 +20,11 @@ export const phaseForRound = (round) => {
   return 3;
 };
 
-/** Создание партии. */
+export function markerLimit(playerCount, nodeHexCount) {
+  if (playerCount >= 4) return MARKERS_PER_PLAYER;
+  return Math.floor(nodeHexCount / Math.max(1, playerCount)) + 1;
+}
+
 export function createGame({ seed, playerDefs }) {
   const rng = makeRng(seed);
   const players = playerDefs.map((p, i) => ({
@@ -28,8 +32,10 @@ export function createGame({ seed, playerDefs }) {
     name: p.name,
     color: COLORS[i] ?? COLORS[0],
     seat: i,
-    coins: START_COINS,   // Ко́ины — валюта, тратится на рынке
-    points: 0,            // Очки — сумма всех захватов, НИКОГДА не тратятся
+    coins: START_COINS,      // Ко́ины — валюта, тратится на рынке
+    points: 0,               // Очки — ПРОИЗВОДНАЯ от текущих маркеров; см. recomputePoints
+    capturedTiles: new Set(),// Ключи узлов, за первое вскрытие которых уже получены коины.
+                             // Монотонное множество: добавляем, никогда не удаляем.
     cards: [],
     markersLeft: MARKERS_PER_PLAYER,
     core: { q: 0, r: 0 },
@@ -45,17 +51,22 @@ export function createGame({ seed, playerDefs }) {
     q: 0, r: 0, type: 'start', faceUp: true, markers: [], blockedFor: [],
   };
 
-  // 12 тайлов рубашкой вверх вокруг центра.
   for (const s of ring(0, 0, 1).concat(ring(0, 0, 2))) {
     tiles[keyOf(s.q, s.r)] = {
       q: s.q, r: s.r, type: reserve.shift(), faceUp: false, markers: [], blockedFor: [],
     };
   }
 
+  const nodeHexCount = Object.values(tiles).filter((t) =>
+    Object.prototype.hasOwnProperty.call(TILE_INFO, t.type)
+  ).length;
+  const markersPerPlayer = markerLimit(players.length, nodeHexCount);
+  for (const p of players) p.markersLeft = markersPerPlayer;
+
   return {
     seed,
     rngState: rng.state,
-    status: 'lobby',            // lobby -> playing -> finished
+    status: 'lobby',
     players,
     currentIndex: 0,
     round: 1,
@@ -75,7 +86,7 @@ export function createGame({ seed, playerDefs }) {
     log: [],
     winnerId: null,
     finalScores: null,
-    peek: {},                   // playerId -> { "q,r": type } — приватные подсказки Сниффера
+    peek: {},
     turnSnapshot: null,
   };
 }
@@ -95,6 +106,28 @@ export function log(g, text, extra = {}) {
   if (g.log.length > 500) g.log.shift();
 }
 
+/**
+ * Пересчёт очков игрока по его текущим маркерам на поле.
+ * Вызывается при любом изменении маркеров: захват, атака, spoofing, logic_bomb.
+ * Бонус CryptoLocker сюда НЕ входит — он добавляется отдельно в finalScore,
+ * потому что зависит от типа узла и карты игрока.
+ */
+export function recomputePoints(g, p) {
+  let total = 0;
+  for (const t of Object.values(g.tiles)) {
+    const mine = t.markers.filter((m) => m.playerId === p.id).length;
+    if (!mine) continue;
+    total += (TILE_INFO[t.type]?.points ?? 0) * mine;
+  }
+  p.points = total;
+  return total;
+}
+
+/** Пересчитать очки для нескольких игроков сразу (удобно после обмена маркерами). */
+export function recomputePointsFor(g, players) {
+  for (const p of players) recomputePoints(g, p);
+}
+
 /* --------------------------- ЦИКЛ И ХОД --------------------------- */
 
 export function startGame(g) {
@@ -102,15 +135,16 @@ export function startGame(g) {
   if (g.players.length < 2) return { error: 'Нужно минимум 2 игрока' };
   g.status = 'playing';
   g.currentIndex = 0;
+  // Очки изначально нулевые — маркеров ни у кого нет.
+  for (const p of g.players) recomputePoints(g, p);
   log(g, 'Сеть инициализирована. Фаза 1: Экспансия и изоляция.');
   return beginTurn(g);
 }
 
 export function beginTurn(g) {
   const p = currentPlayer(g);
-  g.peek[p.id] = null; // подсказки Сниффера живут только внутри хода
+  g.peek[p.id] = null;
 
-  // Купленные карты «включаются» с началом следующего хода владельца.
   for (const c of p.cards) {
     if (!c.armed) c.armed = true;
     c.used = false;
@@ -123,7 +157,7 @@ export function beginTurn(g) {
   }
 
   g.actionsLeft = hasPassive(p, 'ai_upgrade') ? 3 : 2;
-  g.actionsSpent = 0;   // сколько действий уже потрачено — нужно для права на досрочный пас
+  g.actionsSpent = 0;
   g.turnSnapshot = {
     points: Object.fromEntries(g.players.map((x) => [x.id, x.points])),
     coins: Object.fromEntries(g.players.map((x) => [x.id, x.coins])),
@@ -157,12 +191,6 @@ export function advanceTurn(g) {
   return beginTurn(g);
 }
 
-/**
- * Конец цикла (каждые 5 кругов): выплата дохода + перезагрузка разовых способностей.
- *
- * Доход = сумма очковой ценности удержанных узлов, выданная Ко́инами.
- * Сами очки при этом не трогаются — это отдельный несгораемый счёт.
- */
 export function endCycle(g) {
   const paying = INCOME_AFTER_ROUTER || !g.routerPlaced;
 
@@ -191,7 +219,6 @@ export function endCycle(g) {
   if (!paying) log(g, 'Маршрутизатор в сети — доход больше не выплачивается.');
 }
 
-/** Заблокирован ли маркер конкретного игрока на тайле (Ransomware). */
 export const isBlocked = (tile, playerId) =>
   (tile.blockedFor ?? []).some((b) => b.playerId === playerId);
 
@@ -202,10 +229,19 @@ export function checkRouterTrigger(g) {
   const p = currentPlayer(g);
   if (p.points < POINTS_TO_TRIGGER) return false;
 
+  const slots = expansionSlots(g);
+  if (!slots.length) return false;
+
+  const rng = makeRng(g.rngState);
+  const slot = slots[Math.floor(rng.next() * slots.length)];
+  g.rngState = rng.state;
   g.routerPlaced = true;
-  g.finalRoundsLeft = FINAL_ROUNDS;
-  g.pending = { type: 'place_router', playerId: p.id, options: expansionSlots(g) };
-  log(g, `${p.name} набрал ${POINTS_TO_TRIGGER} очков — Центральный Маршрутизатор выходит в сеть! Финальный штурм: ${FINAL_ROUNDS} круга.`);
+  g.finalRoundsLeft = null;
+  g.tiles[keyOf(slot.q, slot.r)] = {
+    q: slot.q, r: slot.r, type: 'router', faceUp: true, markers: [], blockedFor: [],
+  };
+  g.pending = null;
+  log(g, `${p.name} набрал ${POINTS_TO_TRIGGER} очков — Центральный Маршрутизатор автоматически появился на карте (q${slot.q}, r${slot.r}). Взлом на 6 завершает партию.`);
   return true;
 }
 
@@ -224,28 +260,29 @@ export { expansionSlots };
 
 /**
  * Финальный подсчёт.
- *  cumulative — сумма всех захватов за партию (очки вообще не отнимаются).
+ *  cumulative — очки = текущее удержание (p.points уже пересчитан как живая сумма)
+ *               + бонус CryptoLocker за удержанные hard-узлы.
  *  holdings   — только удержанные узлы на момент финала.
  */
 export function finalScore(g, p) {
-  let points = 0;
+  let points = p.points;    // живая сумма — пересчитывается движком при каждом изменении
 
-  if (SCORING_MODE === 'cumulative') {
-    points = p.points;
-    if (hasPassive(p, 'crypto_locker')) {
-      const hardHeld = Object.values(g.tiles).filter(
-        (t) => t.type === 'hard' && t.markers.some((m) => m.playerId === p.id),
-      ).length;
-      points += CRYPTO_LOCKER_BONUS * hardHeld;
+  if (SCORING_MODE === 'holdings') {
+    // На случай, если переключат режим: пересчитываем строго по полю,
+    // не полагаясь на p.points.
+    points = 0;
+    for (const t of Object.values(g.tiles)) {
+      const mine = t.markers.filter((m) => m.playerId === p.id).length;
+      if (!mine) continue;
+      points += (TILE_INFO[t.type]?.points ?? 0) * mine;
     }
-    return points;
   }
 
-  for (const t of Object.values(g.tiles)) {
-    const mine = t.markers.filter((m) => m.playerId === p.id).length;
-    if (!mine) continue;
-    points += (TILE_INFO[t.type]?.points ?? 0) * mine;
-    if (t.type === 'hard' && hasPassive(p, 'crypto_locker')) points += CRYPTO_LOCKER_BONUS * mine;
+  if (hasPassive(p, 'crypto_locker')) {
+    const hardHeld = Object.values(g.tiles).filter(
+      (t) => t.type === 'hard' && t.markers.some((m) => m.playerId === p.id),
+    ).length;
+    points += CRYPTO_LOCKER_BONUS * hardHeld;
   }
   return points;
 }

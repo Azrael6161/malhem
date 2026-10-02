@@ -10,7 +10,12 @@ export default function Scoreboard({ state, detailed }) {
   return (
     <table className="scores">
       <thead>
-        <tr><th>Вирус</th><th title="Сумма всех захватов">Очки</th><th>Ко́ины</th><th>Узлов</th></tr>
+        <tr>
+          <th>Вирус</th>
+          <th title="Текущее удержание: сумма очков по вашим маркерам на поле">Очки</th>
+          <th>Ко́ины</th>
+          <th>Узлов</th>
+        </tr>
       </thead>
       <tbody>
         {rows.map((r, i) => {
@@ -34,7 +39,9 @@ export default function Scoreboard({ state, detailed }) {
         <tfoot>
           <tr>
             <td colSpan={4} className="fine">
-              Очки — сумма всех захватов за партию; узел можно потерять, но очки остаются.
+              Очки — текущее удержание: сумма очков за узлы, где стоят ваши маркеры.
+              Потеряли узел — очки за него списались; отбили обратно — начислились снова.
+              Ко́ины за повторный захват того же узла не выдаются.
               Бонусы симбиотических карт (CryptoLocker) уже учтены.
             </td>
           </tr>
@@ -42,4 +49,4 @@ export default function Scoreboard({ state, detailed }) {
       )}
     </table>
   );
-}
+};
