@@ -6,7 +6,7 @@ import {
   currentPlayer, playerById, log, advanceTurn, hasPassive,
   checkRouterTrigger, expansionSlots, finishGame,
 } from './state.js';
-import { RANSOM_COST, MARKERS_PER_PLAYER, CAPTURE_BOUNTY } from './config.js';
+import { RANSOM_COST, CAPTURE_BOUNTY } from './config.js';
 
 const fail = (error) => ({ error });
 const KEY = (c) => keyOf(c?.q ?? NaN, c?.r ?? NaN);
@@ -389,7 +389,7 @@ export function attack(g, playerId, targetPlayerId) {
     const alreadyOwn = tile.markers.some((m) => m.playerId === p.id);
     if (alreadyOwn) {
       tile.markers = tile.markers.filter((m) => m !== mark);
-      victim.markersLeft = Math.min(MARKERS_PER_PLAYER, victim.markersLeft + 1);
+      victim.markersLeft = Math.min(markerLimit(g.players.length, Object.values(g.tiles).filter((t) => ['basic', 'medium', 'hard'].includes(t.type)).length), victim.markersLeft + 1);
       outcome = 'RootStorm вытесняет чужой маркер — ваш уже есть на узле';
     } else if (p.markersLeft <= 0) {
       // Атака успешна, но заменить маркер нечем: чужой маркер остаётся.
