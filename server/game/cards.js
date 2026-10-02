@@ -72,8 +72,8 @@ export const CARDS = [
 
 /** Взаимоисключающие способности с пересекающейся механикой захвата/перезаписи маркеров. */
 export const CARD_CONFLICTS = {
-  proxy_in: ['rootstorm', 'adv_proxy'],
-  adv_proxy: ['rootstorm', 'proxy_in'],
+  proxy_in: ['rootstorm'],
+  adv_proxy: ['rootstorm'],
   rootstorm: ['proxy_in', 'adv_proxy'],
 };
 
