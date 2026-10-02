@@ -1,5 +1,5 @@
 import { buildReserve, TILE_INFO, isNode } from './tiles.js';
-import { CARDS, byId, conflictsWith } from './cards.js';
+import { CARDS, byId } from './cards.js';
 import { shuffle, makeRng } from './rng.js';
 import { keyOf, ring } from './hex.js';
 import {
