@@ -203,6 +203,7 @@ section.center { display: flex; flex-direction: column; min-height: 0; position:
   white-space: nowrap;
   animation: noticeFade 0.2s ease-out;
 }
+.board-notice { margin: 0 0 8px; text-align: center; width: 100%; box-sizing: border-box; }
 .header-notice.good {
   background: rgba(42, 211, 154, 0.12);
   border: 1px solid #2ad39a;

@@ -2,6 +2,7 @@ import { buildReserve, TILE_INFO, isNode } from './tiles.js';
 import { CARDS, byId } from './cards.js';
 import { shuffle, makeRng } from './rng.js';
 import { keyOf, ring } from './hex.js';
+import { TILE_INFO } from './tiles.js';
 import {
   COLORS, START_COINS, MARKERS_PER_PLAYER, POINTS_TO_TRIGGER, FINAL_ROUNDS,
   PHASE_LENGTHS, HARD_ROUND_CAP, INCOME_BY_TILE, SCORING_MODE,
@@ -21,6 +22,11 @@ export const phaseForRound = (round) => {
 };
 
 /** Создание партии. */
+export function markerLimit(playerCount, nodeHexCount) {
+  if (playerCount >= 4) return MARKERS_PER_PLAYER;
+  return Math.floor(nodeHexCount / Math.max(1, playerCount)) + 1;
+}
+
 export function createGame({ seed, playerDefs }) {
   const rng = makeRng(seed);
   const players = playerDefs.map((p, i) => ({
@@ -51,6 +57,12 @@ export function createGame({ seed, playerDefs }) {
       q: s.q, r: s.r, type: reserve.shift(), faceUp: false, markers: [], blockedFor: [],
     };
   }
+
+  const nodeHexCount = Object.values(tiles).filter((t) =>
+    Object.prototype.hasOwnProperty.call(TILE_INFO, t.type)
+  ).length;
+  const markersPerPlayer = markerLimit(players.length, nodeHexCount);
+  for (const p of players) p.markersLeft = markersPerPlayer;
 
   return {
     seed,
@@ -202,10 +214,20 @@ export function checkRouterTrigger(g) {
   const p = currentPlayer(g);
   if (p.points < POINTS_TO_TRIGGER) return false;
 
+  const slots = expansionSlots(g);
+  if (!slots.length) return false;
+
+  // Маршрутизатор появляется автоматически на случайном свободном краю сети.
+  const rng = makeRng(g.rngState);
+  const slot = slots[Math.floor(rng.next() * slots.length)];
+  g.rngState = rng.state;
   g.routerPlaced = true;
-  g.finalRoundsLeft = FINAL_ROUNDS;
-  g.pending = { type: 'place_router', playerId: p.id, options: expansionSlots(g) };
-  log(g, `${p.name} набрал ${POINTS_TO_TRIGGER} очков — Центральный Маршрутизатор выходит в сеть! Финальный штурм: ${FINAL_ROUNDS} круга.`);
+  g.finalRoundsLeft = null;
+  g.tiles[keyOf(slot.q, slot.r)] = {
+    q: slot.q, r: slot.r, type: 'router', faceUp: true, markers: [], blockedFor: [],
+  };
+  g.pending = null;
+  log(g, `${p.name} набрал ${POINTS_TO_TRIGGER} очков — Центральный Маршрутизатор автоматически появился на карте (q${slot.q}, r${slot.r}). Взлом на 6 завершает партию.`);
   return true;
 }
 

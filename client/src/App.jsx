@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { Component, useEffect, useState } from 'react';
 import { useGameSocket } from './useGameSocket.js';
 import HexBoard from './board/HexBoard.jsx';
 import HUD from './components/HUD.jsx';
@@ -8,6 +8,31 @@ import Hand from './components/Hand.jsx';
 import RansomPanel from './components/RansomPanel.jsx';
 import PendingOverlay from './components/PendingOverlay.jsx';
 import { PHASE_INFO, COLOR_HEX } from './constants.js';
+
+class AppErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { failed: false, message: '' };
+  }
+  static getDerivedStateFromError(error) {
+    return { failed: true, message: error?.message || 'Неизвестная ошибка интерфейса' };
+  }
+  componentDidCatch(error) {
+    console.error('[MALHEM UI]', error);
+  }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="lobby-screen" style={{ textAlign: 'center' }}>
+        <h2>Интерфейс игры восстановился некорректно</h2>
+        <p style={{ color: '#888', maxWidth: 520, margin: '10px auto' }}>{this.state.message}</p>
+        <button className="btn primary" onClick={() => this.setState({ failed: false, message: '' })}>
+          Повторить без перезагрузки
+        </button>
+      </div>
+    );
+  }
+}
 
 export default function App() {
   const [creds, setCreds] = useState(() => {
@@ -64,7 +89,7 @@ export default function App() {
     );
   }
 
-  return <GameTable creds={creds} onLeave={() => { localStorage.removeItem('malhem'); setCreds(null); }} />;
+  return <AppErrorBoundary><GameTable creds={creds} onLeave={() => { localStorage.removeItem('malhem'); setCreds(null); }} /></AppErrorBoundary>;
 }
 
 function GameTable({ creds, onLeave }) {
@@ -116,8 +141,12 @@ function GameTable({ creds, onLeave }) {
   );
 
   const me = state.players.find((p) => p.id === creds.playerId);
+  useEffect(() => {
+    if (state && !me) handleAuthError();
+  }, [state, me]);
+  if (!me) return null;
   const myTurn = state.currentPlayerId === creds.playerId;
-  const phase = PHASE_INFO[state.phase];
+  const phase = PHASE_INFO[state.phase] ?? PHASE_INFO[1];
 
   /** Клик по гексу в режиме выбора цели. */
   const handleSelect = (tile) => {
@@ -184,6 +213,15 @@ function GameTable({ creds, onLeave }) {
         </aside>
 
         <section className="center">
+          {notice && (
+            <div
+              className={`header-notice board-notice ${noticeIsFail ? 'bad' : 'good'}`}
+              role="status"
+              aria-live="polite"
+            >
+              {notice}
+            </div>
+          )}
           <HexBoard
             tiles={state.tiles}
             players={state.players}
