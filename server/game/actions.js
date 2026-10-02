@@ -3,7 +3,7 @@ import { TILE_INFO, isNode, isTrap } from './tiles.js';
 import { byId, costFor, CARD_LEVELS, conflictsWith } from './cards.js';
 import { rollD6 } from './rng.js';
 import {
-  currentPlayer, playerById, log, advanceTurn, hasPassive,
+  currentPlayer, playerById, log, advanceTurn, hasPassive, markerLimit,
   checkRouterTrigger, expansionSlots, finishGame,
 } from './state.js';
 import { RANSOM_COST, CAPTURE_BOUNTY } from './config.js';
