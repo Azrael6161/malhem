@@ -217,7 +217,7 @@ console.log('\nROOTSTORM / ПРОКСИ — конфликт и корректн
   const own = node.markers.filter((m) => m.playerId === 'p0');
   check('RootStorm при успешной атаке создаёт ровно один свой маркер', own.length === 1);
   check('RootStorm расходует один доступный маркер', a.markersLeft === 0);
-  check('вытесненный маркер возвращается владельцу', b.markersLeft === 10);
+  check('вытесненный маркер возвращается владельцу', b.markersLeft === 7);
   check('результат атаки содержит числовые броски', Number.isInteger(attack.attackRoll) && Number.isInteger(attack.defenseRoll));
 }
 
@@ -248,6 +248,24 @@ console.log('\nМАРШРУТИЗАТОР — автоматическое по�
 }
 
 /* ---------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------- */
+console.log('\nМАРКЕРЫ — количество зависит от узлов и игроков\n');
+{
+  const g2 = fresh(41);
+  check('2 игрока получают 7 маркеров при 12 узлах', g2.players.every((p) => p.markersLeft === 7));
+
+  const g3 = A.createGame({ seed: 42, playerDefs: [
+    { id: 'p0', name: 'P0' }, { id: 'p1', name: 'P1' }, { id: 'p2', name: 'P2' },
+  ]});
+  check('3 игрока получают 5 маркеров при 12 узлах', g3.players.every((p) => p.markersLeft === 5));
+
+  const g4 = A.createGame({ seed: 43, playerDefs: [
+    { id: 'p0', name: 'P0' }, { id: 'p1', name: 'P1' }, { id: 'p2', name: 'P2' }, { id: 'p3', name: 'P3' },
+  ]});
+  check('4 игрока получают стандартные 10 маркеров', g4.players.every((p) => p.markersLeft === 10));
+}
+
 console.log(`\n${'─'.repeat(46)}`);
 console.log(`  пройдено ${passed} · провалено ${failed}`);
 console.log(`${'─'.repeat(46)}\n`);
