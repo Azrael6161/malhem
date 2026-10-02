@@ -213,6 +213,15 @@ function GameTable({ creds, onLeave }) {
         </aside>
 
         <section className="center">
+          {notice && (
+            <div
+              className={`header-notice board-notice ${noticeIsFail ? 'bad' : 'good'}`}
+              role="status"
+              aria-live="polite"
+            >
+              {notice}
+            </div>
+          )}
           <HexBoard
             tiles={state.tiles}
             players={state.players}
