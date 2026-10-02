@@ -714,17 +714,7 @@ export function placeTile(g, playerId, slot, reserveIndex = 0) {
 }
 
 export function placeRouter(g, playerId, slot) {
-  const pend = g.pending;
-  if (!pend || pend.type !== 'place_router' || pend.playerId !== playerId) {
-    return fail('Сейчас не время для Маршрутизатора');
-  }
-  if (!pend.options.some((o) => o.q === slot.q && o.r === slot.r)) {
-    return fail('Маршрутизатор нужно пристыковать к открытому краю сети');
-  }
-  g.tiles[KEY(slot)] = { q: slot.q, r: slot.r, type: 'router', faceUp: true, markers: [], blockedFor: [] };
-  g.pending = null;
-  log(g, '★ Центральный Маршрутизатор подключён к сети. Финальный штурм начинается!');
-  return { ok: true };
+  return fail('Маршрутизатор размещается автоматически');
 }
 
 export function chooseDrop(g, playerId, uid) {
