@@ -2,7 +2,6 @@ import { buildReserve, TILE_INFO, isNode } from './tiles.js';
 import { CARDS, byId } from './cards.js';
 import { shuffle, makeRng } from './rng.js';
 import { keyOf, ring } from './hex.js';
-import { TILE_INFO } from './tiles.js';
 import {
   COLORS, START_COINS, MARKERS_PER_PLAYER, POINTS_TO_TRIGGER, FINAL_ROUNDS,
   PHASE_LENGTHS, HARD_ROUND_CAP, INCOME_BY_TILE, SCORING_MODE,
