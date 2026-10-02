@@ -3,7 +3,7 @@ import { CARDS, byId } from './cards.js';
 import { shuffle, makeRng } from './rng.js';
 import { keyOf, ring } from './hex.js';
 import {
-  COLORS, START_COINS, MARKERS_PER_PLAYER, POINTS_TO_TRIGGER, FINAL_ROUNDS,
+  COLORS, START_COINS, MARKERS_PER_PLAYER, POINTS_TO_TRIGGER, FINAL_ROUNDS, TILE_INFO,
   PHASE_LENGTHS, HARD_ROUND_CAP, INCOME_BY_TILE, SCORING_MODE,
   CRYPTO_LOCKER_BONUS, RANSOM_COST, INCOME_AFTER_ROUTER, START_COINS as _SC,
 } from './config.js';
@@ -21,6 +21,11 @@ export const phaseForRound = (round) => {
 };
 
 /** Создание партии. */
+export function markerLimit(playerCount, nodeHexCount) {
+  if (playerCount >= 4) return MARKERS_PER_PLAYER;
+  return Math.floor(nodeHexCount / Math.max(1, playerCount)) + 1;
+}
+
 export function createGame({ seed, playerDefs }) {
   const rng = makeRng(seed);
   const players = playerDefs.map((p, i) => ({
@@ -51,6 +56,12 @@ export function createGame({ seed, playerDefs }) {
       q: s.q, r: s.r, type: reserve.shift(), faceUp: false, markers: [], blockedFor: [],
     };
   }
+
+  const nodeHexCount = Object.values(tiles).filter((t) =>
+    Object.prototype.hasOwnProperty.call(TILE_INFO, t.type)
+  ).length;
+  const markersPerPlayer = markerLimit(players.length, nodeHexCount);
+  for (const p of players) p.markersLeft = markersPerPlayer;
 
   return {
     seed,
